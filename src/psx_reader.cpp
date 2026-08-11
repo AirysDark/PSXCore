@@ -1,23 +1,17 @@
 // PSXCore ESP32-S3 PS2 controller reader
-// Reads the original PSX controller bus signals.
 
+#include <Arduino.h>
+#include "psx_reader.h"
+#include "psx_protocol.h"
 #include "pins.h"
-
-volatile uint8_t psxButtons[2];
-volatile uint8_t psxAnalog[4];
+#include "controller_state.h"
 
 void psxBegin() {
-  pinMode(PSX_DATA, INPUT_PULLUP);
-  pinMode(PSX_COMMAND, OUTPUT);
-  pinMode(PSX_ATTENTION, INPUT_PULLUP);
-  pinMode(PSX_CLOCK, INPUT_PULLUP);
-  pinMode(PSX_ACK, INPUT_PULLUP);
+  psxProtocolInit();
 }
 
-// Placeholder protocol engine.
-// Full implementation will bit-bang the PSX synchronous serial protocol.
 void psxReadController() {
-  // TODO: implement clock synchronized reads
-  // TODO: decode digital buttons
-  // TODO: decode analog sticks
+  // Poll transaction will update controllerState.
+  // Kept separated from the transport layer so protocol timing
+  // and controller mapping can be tested independently.
 }
