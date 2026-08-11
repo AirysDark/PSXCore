@@ -9,14 +9,25 @@
 
 void setup() {
   Serial.begin(115200);
+  delay(500);
+
+  Serial.println("PSXCore boot");
+  Serial.println("Checking SD updater");
 
   // Check SD card before normal startup.
   // If no update exists, continue boot normally.
-  sdUpdateCheck();
+  if (!sdUpdateCheck()) {
+    Serial.println("SD update skipped");
+  }
 
+  Serial.println("Starting PSX controller");
   psxBegin();
   psx_enable_analog_mode();
+  Serial.println("PSX ready");
+
+  Serial.println("Starting Bluetooth HID");
   bleGamepadBegin();
+  Serial.println("BLE advertising started");
 }
 
 void loop() {
