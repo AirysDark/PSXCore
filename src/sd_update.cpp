@@ -2,16 +2,21 @@
 #include <SD.h>
 #include <Update.h>
 #include "sd_update.h"
+#include "pins.h"
 
 // SD firmware update file:
 // /firmware/PSXCore.bin
 // No config files required.
 
 bool sdUpdateCheck() {
-  if (!SD.begin()) {
+  Serial.println("BOOT: checking SD updater");
+
+  if (!SD.begin(SD_CS)) {
     Serial.println("SD: not detected");
     return false;
   }
+
+  Serial.println("SD: detected");
 
   const char *path = "/firmware/PSXCore.bin";
 
@@ -27,13 +32,13 @@ bool sdUpdateCheck() {
   }
 
   size_t size = firmware.size();
+  Serial.printf("SD: firmware found (%u bytes)\n", (unsigned)size);
+
   if (size < 1024) {
     Serial.println("OTA: invalid firmware size");
     firmware.close();
     return false;
   }
-
-  Serial.printf("SD: firmware found (%u bytes)\n", (unsigned)size);
 
   if (!Update.begin(size)) {
     Serial.println("OTA: not enough space");
@@ -55,10 +60,10 @@ bool sdUpdateCheck() {
     return false;
   }
 
-  // Remove the update package only after successful flash.
   SD.remove(path);
 
-  Serial.println("OTA: update complete, restarting");
+  Serial.println("OTA: update complete");
+  Serial.println("BOOT: restarting into new firmware");
   delay(1000);
   ESP.restart();
 
