@@ -2,8 +2,10 @@
 #include <SD.h>
 #include "sd_update.h"
 
-// Placeholder SD update service.
-// Future version: verify version.txt, then stream firmware.bin to OTA partition.
+// SD update service
+// Update file location:
+// /firmware/PSXCore.bin
+// No config files or folders are required.
 
 bool sdUpdateCheck() {
   if (!SD.begin()) {
@@ -12,11 +14,10 @@ bool sdUpdateCheck() {
   }
 
   if (!SD.exists("/firmware/PSXCore.bin")) {
-    Serial.println("SD: no update found");
+    Serial.println("SD: no firmware update");
     return false;
   }
 
-  Serial.println("SD: update package found");
-  Serial.println("SD update handler ready");
-  return false;
+  Serial.println("SD: firmware update found");
+  return true;
 }
