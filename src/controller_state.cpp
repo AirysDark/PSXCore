@@ -1,3 +1,3 @@
-#include "psxcore/controller_state.h"
+#include "controller_state.h"
 
 ControllerState controllerState;
