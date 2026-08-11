@@ -1,12 +1,26 @@
 #include <Arduino.h>
+#include <BleGamepad.h>
+#include "controller_state.h"
 
-// PSXCore BLE HID layer
-// ESP32-S3 NimBLE integration point.
+BleGamepad bleGamepad("PSXCore ESP32-S3", "AirysDark", 100);
 
 void ble_init() {
-  // TODO: initialise NimBLE HID gamepad service.
+  bleGamepad.begin();
 }
 
 void ble_send_report() {
-  // TODO: send controller_state as HID report.
+  if (!bleGamepad.isConnected()) return;
+
+  bleGamepad.setLeftThumb(controllerState.lx, controllerState.ly);
+  bleGamepad.setRightThumb(controllerState.rx, controllerState.ry);
+
+  bleGamepad.sendReport();
+}
+
+void bleGamepadBegin() {
+  ble_init();
+}
+
+void bleGamepadUpdate() {
+  ble_send_report();
 }
