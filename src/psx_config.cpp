@@ -1,7 +1,7 @@
 #include <Arduino.h>
+#include "psx_config.h"
 #include "pins.h"
-
-uint8_t psxTransferByte(uint8_t value);
+#include "psx_protocol.h"
 
 bool psx_enable_analog_mode() {
   digitalWrite(PSX_ATTENTION, LOW);
