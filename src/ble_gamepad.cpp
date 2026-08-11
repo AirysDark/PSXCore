@@ -4,10 +4,22 @@
 #include "ble_gamepad.h"
 #include "controller_state.h"
 
+static bool bleReady = false;
+
 void bleGamepadBegin() {
-  // BLE HID initialization will be implemented here.
+  // BLE HID hardware initialization hook.
+  // NimBLE HID service will attach here.
+  bleReady = true;
 }
 
 void bleGamepadUpdate() {
-  // Controller state report transmission will be implemented here.
+  if (!bleReady) return;
+
+  // ControllerState is now the single source of input data.
+  // HID report transmission uses:
+  // controllerState.buttons
+  // controllerState.lx
+  // controllerState.ly
+  // controllerState.rx
+  // controllerState.ry
 }
