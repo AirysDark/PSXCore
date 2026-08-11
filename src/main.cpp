@@ -1,11 +1,20 @@
-#include <Arduino.h>
-#include "psxcore/pins.h"
+// PSXCore ESP32-S3 firmware entry point
 
-void psxcoreBegin();
+#include "pins.h"
 
-void setup(){
-  psxcoreBegin();
+void psxBegin();
+void psxReadController();
+void bleGamepadBegin();
+void bleGamepadUpdate();
+bool psx_enable_analog_mode();
+
+void setup() {
+  psxBegin();
+  psx_enable_analog_mode();
+  bleGamepadBegin();
 }
 
-void loop(){
+void loop() {
+  psxReadController();
+  bleGamepadUpdate();
 }
