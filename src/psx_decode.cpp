@@ -11,12 +11,12 @@
 
 void decodePSXPacket(uint8_t *packet, ControllerState &state)
 {
-    if(packet[0] != 0xFF) return;
+    if (packet[0] != 0xFF) return;
 
     state.buttons = ~(packet[3] | (packet[4] << 8));
 
-    state.leftX  = packet[5];
-    state.leftY  = packet[6];
-    state.rightX = packet[7];
-    state.rightY = packet[8];
+    state.lx = packet[5];
+    state.ly = packet[6];
+    state.rx = packet[7];
+    state.ry = packet[8];
 }
