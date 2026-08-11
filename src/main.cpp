@@ -2,12 +2,9 @@
 
 #include "pins.h"
 #include "controller_state.h"
-
-void psxBegin();
-void psxReadController();
-void bleGamepadBegin();
-void bleGamepadUpdate();
-bool psx_enable_analog_mode();
+#include "psx_reader.h"
+#include "ble_gamepad.h"
+#include "psx_config.h"
 
 void setup() {
   psxBegin();
