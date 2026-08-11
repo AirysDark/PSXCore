@@ -25,5 +25,10 @@ void psxReadController() {
 
   digitalWrite(PSX_ATTENTION, HIGH);
 
+  // Standard digital/analog PSX response header check.
+  if (packet[0] == 0xFF || packet[1] == 0xFF) {
+    return;
+  }
+
   decodePSXPacket(packet, controllerState);
 }
