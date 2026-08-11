@@ -27,6 +27,12 @@ bool sdUpdateCheck() {
   }
 
   size_t size = firmware.size();
+  if (size < 1024) {
+    Serial.println("OTA: invalid firmware size");
+    firmware.close();
+    return false;
+  }
+
   Serial.printf("SD: firmware found (%u bytes)\n", (unsigned)size);
 
   if (!Update.begin(size)) {
@@ -48,6 +54,9 @@ bool sdUpdateCheck() {
     Serial.println("OTA: finalize failed");
     return false;
   }
+
+  // Remove the update package only after successful flash.
+  SD.remove(path);
 
   Serial.println("OTA: update complete, restarting");
   delay(1000);
