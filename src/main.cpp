@@ -1,6 +1,7 @@
 // PSXCore ESP32-S3 firmware entry point
 
 #include "pins.h"
+#include "controller_state.h"
 
 void psxBegin();
 void psxReadController();
