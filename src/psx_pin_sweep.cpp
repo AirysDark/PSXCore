@@ -26,28 +26,34 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId) {
   digitalWrite(psxPins.attention, HIGH);
   delayMicroseconds(50);
 
+  // Standard PSX transaction:
+  // Host: 01 42 00
+  // Pad : FF ID 5A
+  // The previous implementation incorrectly checked the 3rd returned
+  // byte as FF and the 4th as the controller ID, so all 120 permutations
+  // were rejected even when the wiring was correct.
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
-  bool ackSeen = false;
   uint8_t response0 = psxTransferByte(0x01);
-  ackSeen |= psxLastTransferAcked();
-  (void)response0;
+  bool ack0 = psxLastTransferAcked();
 
   uint8_t response1 = psxTransferByte(0x42);
-  ackSeen |= psxLastTransferAcked();
-  (void)response1;
+  bool ack1 = psxLastTransferAcked();
 
-  uint8_t header = psxTransferByte(0x00);
-  ackSeen |= psxLastTransferAcked();
-  controllerId = psxTransferByte(0x00);
-  ackSeen |= psxLastTransferAcked();
+  uint8_t response2 = psxTransferByte(0x00);
+  bool ack2 = psxLastTransferAcked();
+
+  controllerId = response1;
 
   digitalWrite(psxPins.attention, HIGH);
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
 
-  return ackSeen && header == 0xFF && validControllerId(controllerId);
+  return ack0 && ack1 && ack2 &&
+         response0 == 0xFF &&
+         validControllerId(controllerId) &&
+         response2 == 0x5A;
 }
 
 bool nextPermutation(int* values, int count) {
