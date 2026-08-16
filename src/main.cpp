@@ -35,17 +35,29 @@ void setup() {
 
 void loop() {
   static uint32_t loopCount = 0;
+  static uint32_t psxUpdateCount = 0;
+  static uint32_t bleUpdateCount = 0;
+
   loopCount++;
 
   psxReadController();
+  psxUpdateCount++;
+
   bleGamepadUpdate();
+  bleUpdateCount++;
 
   // Runtime diagnostics so hangs or failed subsystems are visible.
   static uint32_t lastDebug = 0;
   if (millis() - lastDebug >= 1000) {
     lastDebug = millis();
 
-    Serial.print("[PSXCore] running loop=");
-    Serial.println(loopCount);
+    Serial.print("[PSXCore] uptime=");
+    Serial.print(millis() / 1000);
+    Serial.print("s loop=");
+    Serial.print(loopCount);
+    Serial.print(" psx=");
+    Serial.print(psxUpdateCount);
+    Serial.print(" ble=");
+    Serial.println(bleUpdateCount);
   }
 }
