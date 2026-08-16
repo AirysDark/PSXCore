@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 // PSX button mapping to HID buttons
 #define BTN_SELECT 0x0001
 #define BTN_L3 0x0002
