@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include "psxcore/pins.h"
-#include "psxcore/controller_state.h"
+#include "pins.h"
+#include "controller_state.h"
 
 void psxcoreBegin(){
   pinMode(PSX_DATA, INPUT_PULLUP);
