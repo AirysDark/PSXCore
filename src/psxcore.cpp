@@ -2,10 +2,16 @@
 #include "pins.h"
 #include "controller_state.h"
 
-void psxcoreBegin(){
-  pinMode(PSX_DATA, INPUT_PULLUP);
-  pinMode(PSX_COMMAND, OUTPUT);
-  pinMode(PSX_ATTENTION, OUTPUT);
-  pinMode(PSX_CLOCK, OUTPUT);
-  pinMode(PSX_ACK, INPUT_PULLUP);
+void psxcoreBegin() {
+  psxPinsBegin();
+
+  pinMode(psxPins.data, INPUT_PULLUP);
+  pinMode(psxPins.command, OUTPUT);
+  pinMode(psxPins.attention, OUTPUT);
+  pinMode(psxPins.clock, OUTPUT);
+  pinMode(psxPins.ack, INPUT_PULLUP);
+
+  digitalWrite(psxPins.command, HIGH);
+  digitalWrite(psxPins.attention, HIGH);
+  digitalWrite(psxPins.clock, HIGH);
 }
