@@ -1,6 +1,8 @@
 // PSXCore ESP32-S3 firmware entry point
+// Safe boot diagnostics: each subsystem is isolated so an early reset can be located.
 
 #include <Arduino.h>
+#include <Preferences.h>
 
 #include "pins.h"
 #include "controller_state.h"
@@ -13,10 +15,48 @@
 #include "debug_status.h"
 
 static bool systemBooted = false;
+static bool psxReady = false;
+
+static void bootMark(const char *name, bool ok) {
+  Serial.print("[BOOT] ");
+  Serial.print(name);
+  Serial.print(" ");
+  Serial.println(ok ? "OK" : "FAIL");
+}
+
+static bool testNvs() {
+  Preferences prefs;
+  if (!prefs.begin("psxcore", false)) {
+    return false;
+  }
+  prefs.putUInt("boot", millis());
+  prefs.end();
+  return true;
+}
+
+static bool testPsram() {
+#if CONFIG_SPIRAM_SUPPORT
+  if (!psramFound()) return false;
+  void *p = ps_malloc(256);
+  if (!p) return false;
+  memset(p, 0xA5, 256);
+  bool ok = true;
+  for (size_t i = 0; i < 256; ++i) {
+    if (static_cast<uint8_t *>(p)[i] != 0xA5) {
+      ok = false;
+      break;
+    }
+  }
+  free(p);
+  return ok;
+#else
+  return true;
+#endif
+}
 
 void setup() {
   Serial.begin(115200);
-  delay(500);
+  delay(1000);
 
   Serial.println();
   Serial.println("================================");
@@ -24,23 +64,29 @@ void setup() {
   Serial.println("================================");
 
   debugStatusInit();
-  Serial.println("[BOOT] Debug system      OK");
+  bootMark("Debug system", true);
+
+  Serial.println("[BOOT] Memory/runtime diagnostics...");
+  Serial.printf("[BOOT] Free heap        %u\n", ESP.getFreeHeap());
+#if CONFIG_SPIRAM_SUPPORT
+  Serial.printf("[BOOT] PSRAM detected   %s\n", psramFound() ? "YES" : "NO");
+  Serial.printf("[BOOT] PSRAM size       %u\n", ESP.getPsramSize());
+  Serial.printf("[BOOT] PSRAM free       %u\n", ESP.getFreePsram());
+#endif
+  bootMark("PSRAM test", testPsram());
+  bootMark("NVS test", testNvs());
 
   Serial.println("[BOOT] Checking SD update...");
-  if (sdUpdateCheck()) {
-    Serial.println("[BOOT] SD update handled");
-  } else {
-    Serial.println("[BOOT] No SD update");
-  }
+  bool sdOk = false;
+  // SD failure must never prevent the controller/BLE boot path.
+  sdOk = sdUpdateCheck();
+  bootMark("SD updater", sdOk);
 
-  // PSX initialization is now a two-stage boot protocol. We first try the
-  // saved/default mapping. If the controller does not answer, the firmware
-  // stops and runs a one-time pin sweep over GPIO 4..8.
   Serial.println("[BOOT] Initializing PSX bus...");
   psxBegin();
 
   uint8_t controllerId = 0;
-  bool psxReady = psxProbeController(&controllerId);
+  psxReady = psxProbeController(&controllerId);
 
   if (psxReady) {
     Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
@@ -49,12 +95,9 @@ void setup() {
     Serial.println("[BOOT] Starting pin sweep recovery...");
 
     if (psxPinSweep()) {
-      // psxPinSweep() has already selected and persisted the working mapping.
-      // Re-run the normal PSX initialization path with the corrected pins.
       Serial.println("[BOOT] Re-initializing PSX bus with corrected pins...");
       psxBegin();
       psxReady = psxProbeController(&controllerId);
-
       if (psxReady) {
         Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
       } else {
@@ -69,15 +112,15 @@ void setup() {
     Serial.println("[BOOT] PSX input disabled until a controller responds");
   }
 
-  psxEnableAnalogMode();
-  Serial.println("[BOOT] PSX analog config    OK");
+  bootMark("PSX analog config", psxEnableAnalogMode());
 
   Serial.println("[BOOT] Starting Bluetooth HID...");
   bleGamepadBegin();
-  Serial.println("[BOOT] Bluetooth HID        OK");
+  bootMark("Bluetooth HID", true);
   Serial.println("[BOOT] BLE advertising      ON");
 
   systemBooted = true;
+
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
   Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "AVAILABLE" : "DISABLED");
@@ -85,10 +128,12 @@ void setup() {
 }
 
 void loop() {
-  // PSX polling remains deliberately stopped while the boot protocol is being
-  // validated. This prevents the old FF/FF transaction stream from returning.
-  if (!systemBooted) {
-    return;
+  if (!systemBooted) return;
+
+  // PSX polling remains disabled until the boot probe has confirmed a controller.
+  // This prevents an unconnected bus from flooding the serial console.
+  if (psxReady) {
+    psxReadController();
   }
 
   bleGamepadUpdate();
