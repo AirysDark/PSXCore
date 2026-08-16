@@ -6,9 +6,11 @@
 #include "psx_decode.h"
 #include "pins.h"
 #include "controller_state.h"
+#include "debug_status.h"
 
 void psxBegin() {
   psxProtocolInit();
+  debugStatusPSXState(false);
 }
 
 void psxReadController() {
@@ -25,10 +27,11 @@ void psxReadController() {
 
   digitalWrite(PSX_ATTENTION, HIGH);
 
-  // Standard digital/analog PSX response header check.
   if (packet[0] == 0xFF || packet[1] == 0xFF) {
+    debugStatusPSXState(false);
     return;
   }
 
   decodePSXPacket(packet, controllerState);
+  debugStatusPSXState(true);
 }

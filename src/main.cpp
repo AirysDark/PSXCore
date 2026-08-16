@@ -9,16 +9,17 @@
 #include "ble_gamepad.h"
 #include "psx_config.h"
 #include "sd_update.h"
+#include "debug_status.h"
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
+  debugStatusInit();
+
   Serial.println("PSXCore boot");
   Serial.println("Checking SD updater");
 
-  // Check SD card before normal startup.
-  // If no update exists, continue boot normally.
   if (!sdUpdateCheck()) {
     Serial.println("SD update skipped");
   }
@@ -35,12 +36,10 @@ void setup() {
 
 void loop() {
   psxReadController();
-  bleGamepadUpdate();
+  debugStatusPSXPacket();
 
-  // Runtime heartbeat so failures are visible in serial monitor.
-  static uint32_t lastDebug = 0;
-  if (millis() - lastDebug >= 1000) {
-    lastDebug = millis();
-    Serial.println("[PSXCore] running");
-  }
+  bleGamepadUpdate();
+  debugStatusBLEUpdate();
+
+  debugStatusLoop();
 }
