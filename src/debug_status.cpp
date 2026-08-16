@@ -3,6 +3,8 @@
 
 static uint32_t psxPackets = 0;
 static uint32_t bleUpdates = 0;
+static bool psxDetected = false;
+static bool bleConnected = false;
 
 void debugStatusInit() {
   Serial.println("[DEBUG] status ready");
@@ -16,6 +18,14 @@ void debugStatusBLEUpdate() {
   bleUpdates++;
 }
 
+void debugStatusPSXState(bool detected) {
+  psxDetected = detected;
+}
+
+void debugStatusBLEState(bool connected) {
+  bleConnected = connected;
+}
+
 void debugStatusLoop() {
   static uint32_t last = 0;
 
@@ -27,6 +37,10 @@ void debugStatusLoop() {
     Serial.print("s PSX packets=");
     Serial.print(psxPackets);
     Serial.print(" BLE updates=");
-    Serial.println(bleUpdates);
+    Serial.print(bleUpdates);
+    Serial.print(" PSX=");
+    Serial.print(psxDetected ? "OK" : "WAIT");
+    Serial.print(" BLE=");
+    Serial.println(bleConnected ? "CONNECTED" : "ADVERTISING");
   }
 }
