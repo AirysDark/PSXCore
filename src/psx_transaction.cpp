@@ -6,23 +6,23 @@
 #include "pins.h"
 
 // PSX command transaction engine
-// Implements the standard controller poll sequence foundation.
+// Uses the same runtime pin mapping as the main PSX protocol engine.
 
 static uint8_t transferByte(uint8_t data) {
   uint8_t result = 0;
   for (int i = 0; i < 8; i++) {
-    digitalWrite(PIN_COMMAND, (data >> i) & 1);
-    digitalWrite(PIN_CLOCK, LOW);
+    digitalWrite(psxPins.command, (data >> i) & 1);
+    digitalWrite(psxPins.clock, LOW);
     delayMicroseconds(2);
-    if (digitalRead(PIN_DATA)) result |= (1 << i);
-    digitalWrite(PIN_CLOCK, HIGH);
+    if (digitalRead(psxPins.data)) result |= (1 << i);
+    digitalWrite(psxPins.clock, HIGH);
     delayMicroseconds(2);
   }
   return result;
 }
 
 bool psxPoll(uint8_t *packet, size_t length) {
-  digitalWrite(PIN_ATTENTION, LOW);
+  digitalWrite(psxPins.attention, LOW);
 
   transferByte(0x01);
   transferByte(0x42);
@@ -32,6 +32,6 @@ bool psxPoll(uint8_t *packet, size_t length) {
     packet[i] = transferByte(0x00);
   }
 
-  digitalWrite(PIN_ATTENTION, HIGH);
+  digitalWrite(psxPins.attention, HIGH);
   return true;
 }
