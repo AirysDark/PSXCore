@@ -29,6 +29,14 @@ void psxSetPins(const PsxPins& pins, bool persist = true);
 // Restore the factory/default mapping and erase the saved mapping.
 void psxResetPins();
 
+// Runtime pin aliases. Existing PSX protocol/configuration code can continue
+// using the legacy names while automatically following the active pin mapping.
+#define PSX_DATA      (psxPins.data)
+#define PSX_COMMAND   (psxPins.command)
+#define PSX_ATTENTION (psxPins.attention)
+#define PSX_CLOCK     (psxPins.clock)
+#define PSX_ACK       (psxPins.ack)
+
 // SD card firmware updater pins.
 #define SD_CS         10
 #define SD_MOSI       11
