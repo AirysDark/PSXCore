@@ -1,24 +1,36 @@
 #pragma once
 
-// PSX/PS2 controller interface pins
-#define PSX_DATA      4
-#define PSX_COMMAND   5
-#define PSX_ATTENTION 6
-#define PSX_CLOCK     7
-#define PSX_ACK       8
+#include <stdint.h>
 
-// Compatibility aliases used by PSX transaction engine
-#define PIN_DATA       PSX_DATA
-#define PIN_COMMAND    PSX_COMMAND
-#define PIN_ATTENTION  PSX_ATTENTION
-#define PIN_CLOCK      PSX_CLOCK
-#define PIN_ACK        PSX_ACK
+// PSX/PS2 controller interface pins.
+// Defaults match the ESP32-S3 Tiny / full-size ESP32-S3 wiring currently used.
+#define PSX_DEFAULT_DATA      4
+#define PSX_DEFAULT_COMMAND   5
+#define PSX_DEFAULT_ATTENTION 6
+#define PSX_DEFAULT_CLOCK     7
+#define PSX_DEFAULT_ACK       8
 
-// SD card firmware updater pins
-// Change these if your ESP32-S3 Tiny board uses different wiring
+struct PsxPins {
+  int data;
+  int command;
+  int attention;
+  int clock;
+  int ack;
+};
+
+extern PsxPins psxPins;
+
+// Load the saved pin mapping, falling back to 4/5/6/7/8.
+void psxPinsBegin();
+
+// Replace the active mapping and persist it for the next boot.
+void psxSetPins(const PsxPins& pins, bool persist = true);
+
+// Restore the factory/default mapping and erase the saved mapping.
+void psxResetPins();
+
+// SD card firmware updater pins.
 #define SD_CS         10
 #define SD_MOSI       11
 #define SD_MISO       13
 #define SD_SCK        12
-
-// Future ESP32-S3 BLE HID configuration goes here
