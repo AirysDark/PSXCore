@@ -34,13 +34,18 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t loopCount = 0;
+  loopCount++;
+
   psxReadController();
   bleGamepadUpdate();
 
-  // Runtime heartbeat so failures are visible in serial monitor.
+  // Runtime diagnostics so hangs or failed subsystems are visible.
   static uint32_t lastDebug = 0;
   if (millis() - lastDebug >= 1000) {
     lastDebug = millis();
-    Serial.println("[PSXCore] running");
+
+    Serial.print("[PSXCore] running loop=");
+    Serial.println(loopCount);
   }
 }
