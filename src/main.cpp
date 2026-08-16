@@ -36,4 +36,11 @@ void setup() {
 void loop() {
   psxReadController();
   bleGamepadUpdate();
+
+  // Runtime heartbeat so failures are visible in serial monitor.
+  static uint32_t lastDebug = 0;
+  if (millis() - lastDebug >= 1000) {
+    lastDebug = millis();
+    Serial.println("[PSXCore] running");
+  }
 }
