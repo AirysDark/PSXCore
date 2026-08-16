@@ -3,3 +3,4 @@
 
 void psxProtocolInit();
 uint8_t psxTransferByte(uint8_t value);
+bool psxLastTransferAcked();
