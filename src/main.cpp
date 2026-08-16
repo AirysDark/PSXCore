@@ -5,6 +5,7 @@
 #include "pins.h"
 #include "controller_state.h"
 #include "psx_reader.h"
+#include "psx_pin_sweep.h"
 #include "psx_analog_mode.h"
 #include "ble_gamepad.h"
 #include "psx_config.h"
@@ -17,8 +18,6 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // Keep boot output short and deterministic. Controller polling is disabled
-  // after boot until the PSX bring-up is deliberately enabled again.
   Serial.println();
   Serial.println("================================");
   Serial.println("          PSXCore BOOT");
@@ -34,12 +33,42 @@ void setup() {
     Serial.println("[BOOT] No SD update");
   }
 
+  // PSX initialization is now a two-stage boot protocol. We first try the
+  // saved/default mapping. If the controller does not answer, the firmware
+  // stops and runs a one-time pin sweep over GPIO 4..8.
   Serial.println("[BOOT] Initializing PSX bus...");
   psxBegin();
-  Serial.println("[BOOT] PSX bus             OK");
 
-  // Analog-mode configuration is currently a stub, so call it only as part
-  // of the boot sequence. It does not poll the controller.
+  uint8_t controllerId = 0;
+  bool psxReady = psxProbeController(&controllerId);
+
+  if (psxReady) {
+    Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
+  } else {
+    Serial.println("[BOOT] PSX controller      NO RESPONSE");
+    Serial.println("[BOOT] Starting pin sweep recovery...");
+
+    if (psxPinSweep()) {
+      // psxPinSweep() has already selected and persisted the working mapping.
+      // Re-run the normal PSX initialization path with the corrected pins.
+      Serial.println("[BOOT] Re-initializing PSX bus with corrected pins...");
+      psxBegin();
+      psxReady = psxProbeController(&controllerId);
+
+      if (psxReady) {
+        Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
+      } else {
+        Serial.println("[BOOT] PSX controller      STILL NO RESPONSE");
+      }
+    } else {
+      Serial.println("[BOOT] Pin sweep failed");
+    }
+  }
+
+  if (!psxReady) {
+    Serial.println("[BOOT] PSX input disabled until a controller responds");
+  }
+
   psxEnableAnalogMode();
   Serial.println("[BOOT] PSX analog config    OK");
 
@@ -51,24 +80,18 @@ void setup() {
   systemBooted = true;
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
-  Serial.println("[BOOT] PSX polling          STOPPED");
+  Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "AVAILABLE" : "DISABLED");
   Serial.println("================================");
 }
 
 void loop() {
-  // STOP PSX input polling for now. This deliberately prevents the FF/FF
-  // transaction stream from hammering the controller and serial monitor
-  // while we work on the boot/initialization sequence.
+  // PSX polling remains deliberately stopped while the boot protocol is being
+  // validated. This prevents the old FF/FF transaction stream from returning.
   if (!systemBooted) {
     return;
   }
 
-  // BLE remains alive, but there is no controller polling yet.
   bleGamepadUpdate();
-
-  // Do not print continuously. The normal status system can still run at its
-  // own controlled interval if enabled by the implementation.
   debugStatusLoop();
-
   delay(5);
 }
