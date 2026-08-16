@@ -17,7 +17,11 @@ void resetSweepPins() {
   }
 }
 
-bool probeMapping(const PsxPins& candidate, uint8_t& controllerId) {
+// Probe the PSX data transaction without making ACK mandatory.
+// A controller response is the stronger indication that DATA/CMD/ATT/CLK
+// are correctly assigned. ACK is reported separately because some adapters
+// and controller revisions do not provide a conventional ACK level.
+bool probeMapping(const PsxPins& candidate, uint8_t& controllerId, bool& ackSeen) {
   psxSetPins(candidate, false);
   psxProtocolInit();
 
@@ -29,9 +33,6 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId) {
   // Standard PSX transaction:
   // Host: 01 42 00
   // Pad : FF ID 5A
-  // The previous implementation incorrectly checked the 3rd returned
-  // byte as FF and the 4th as the controller ID, so all 120 permutations
-  // were rejected even when the wiring was correct.
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
@@ -45,13 +46,15 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId) {
   bool ack2 = psxLastTransferAcked();
 
   controllerId = response1;
+  ackSeen = ack0 || ack1 || ack2;
 
   digitalWrite(psxPins.attention, HIGH);
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
 
-  return ack0 && ack1 && ack2 &&
-         response0 == 0xFF &&
+  // Do NOT require ACK to identify a wiring permutation.
+  // FF + known controller ID + 5A proves the four data/control roles.
+  return response0 == 0xFF &&
          validControllerId(controllerId) &&
          response2 == 0x5A;
 }
@@ -93,6 +96,7 @@ bool psxPinSweep() {
   int permutation[5] = {4, 5, 6, 7, 8};
   uint32_t attempts = 0;
   uint8_t controllerId = 0;
+  bool ackSeen = false;
 
   do {
     PsxPins candidate = {
@@ -104,7 +108,7 @@ bool psxPinSweep() {
     };
 
     ++attempts;
-    if (probeMapping(candidate, controllerId)) {
+    if (probeMapping(candidate, controllerId, ackSeen)) {
       Serial.println();
       Serial.println("[PIN SWEEP] VALID PSX WIRING FOUND");
       Serial.printf("[PIN SWEEP] DATA=%d CMD=%d ATT=%d CLK=%d ACK=%d\n",
@@ -114,6 +118,7 @@ bool psxPinSweep() {
                     candidate.clock,
                     candidate.ack);
       Serial.printf("[PIN SWEEP] Controller ID=%02X\n", controllerId);
+      Serial.printf("[PIN SWEEP] ACK=%s\n", ackSeen ? "DETECTED" : "NOT DETECTED");
       Serial.println("[PIN SWEEP] Saving corrected pin mapping");
 
       psxSetPins(candidate, true);
