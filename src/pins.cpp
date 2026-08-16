@@ -14,7 +14,10 @@ static Preferences preferences;
 static bool preferencesOpen = false;
 
 void psxPinsBegin() {
-  if (preferences.begin("psxcore", true)) {
+  // Open read/write so the namespace is created on a fresh device. The old
+  // read-only open produced an NVS NOT_FOUND warning when no saved mapping
+  // existed yet.
+  if (preferences.begin("psxcore", false)) {
     preferencesOpen = true;
 
     if (preferences.getBool("valid", false)) {
