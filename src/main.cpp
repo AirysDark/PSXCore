@@ -5,6 +5,7 @@
 #include "pins.h"
 #include "controller_state.h"
 #include "psx_reader.h"
+#include "psx_analog_mode.h"
 #include "ble_gamepad.h"
 #include "psx_config.h"
 #include "sd_update.h"
@@ -24,7 +25,7 @@ void setup() {
 
   Serial.println("Starting PSX controller");
   psxBegin();
-  psx_enable_analog_mode();
+  psxEnableAnalogMode();
   Serial.println("PSX ready");
 
   Serial.println("Starting Bluetooth HID");
