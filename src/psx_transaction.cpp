@@ -1,3 +1,7 @@
+#include <Arduino.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include "controller_state.h"
 #include "pins.h"
 
