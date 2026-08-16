@@ -4,7 +4,7 @@
 #include "psx_protocol.h"
 
 bool psx_enable_analog_mode() {
-  digitalWrite(PSX_ATTENTION, LOW);
+  digitalWrite(psxPins.attention, LOW);
 
   psxTransferByte(0x01);
   psxTransferByte(0x43);
@@ -15,6 +15,6 @@ bool psx_enable_analog_mode() {
   psxTransferByte(0x00);
   psxTransferByte(0x00);
 
-  digitalWrite(PSX_ATTENTION, HIGH);
+  digitalWrite(psxPins.attention, HIGH);
   return true;
 }
