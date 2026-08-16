@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include "button_map.h"
 
 // Convert PSX analog values to BLE HID range
