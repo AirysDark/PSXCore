@@ -112,7 +112,7 @@ void setup() {
     Serial.println("[BOOT] PSX input disabled until a controller responds");
   }
 
-  bootMark("PSX analog config", psxEnableAnalogMode());
+  bootMark("PSX analog config", psx_enable_analog_mode());
 
   Serial.println("[BOOT] Starting Bluetooth HID...");
   bleGamepadBegin();

@@ -16,5 +16,6 @@ bool psx_enable_analog_mode() {
   psxTransferByte(0x00);
 
   digitalWrite(psxPins.attention, HIGH);
+
   return true;
 }
