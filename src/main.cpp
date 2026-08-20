@@ -26,9 +26,7 @@ static void bootMark(const char *name, bool ok) {
 
 static bool testNvs() {
   Preferences prefs;
-  if (!prefs.begin("psxcore", false)) {
-    return false;
-  }
+  if (!prefs.begin("psxcore", false)) return false;
   prefs.putUInt("boot", millis());
   prefs.end();
   return true;
@@ -76,11 +74,14 @@ void setup() {
   bootMark("PSRAM test", testPsram());
   bootMark("NVS test", testNvs());
 
-  Serial.println("[BOOT] Checking SD update...");
-  bool sdOk = false;
-  // SD failure must never prevent the controller/BLE boot path.
-  sdOk = sdUpdateCheck();
-  bootMark("SD updater", sdOk);
+  // SD is optional hardware. A missing card/module is never a boot failure.
+  Serial.println("[BOOT] Checking optional SD update...");
+  bool sdOk = sdUpdateCheck();
+  if (sdOk) {
+    Serial.println("[BOOT] SD update available/handled");
+  } else {
+    Serial.println("[BOOT] No SD update - continuing");
+  }
 
   Serial.println("[BOOT] Initializing PSX bus...");
   psxBegin();
@@ -98,21 +99,24 @@ void setup() {
       Serial.println("[BOOT] Re-initializing PSX bus with corrected pins...");
       psxBegin();
       psxReady = psxProbeController(&controllerId);
+
       if (psxReady) {
         Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
       } else {
-        Serial.println("[BOOT] PSX controller      STILL NO RESPONSE");
+        Serial.println("[BOOT] PSX controller      RESPONSE NOT CONFIRMED");
       }
     } else {
       Serial.println("[BOOT] Pin sweep failed");
     }
   }
 
-  if (!psxReady) {
-    Serial.println("[BOOT] PSX input disabled until a controller responds");
+  if (psxReady) {
+    Serial.println("[BOOT] PSX input           ENABLED");
+    bootMark("PSX analog config", psx_enable_analog_mode());
+  } else {
+    Serial.println("[BOOT] PSX input           SEARCHING");
+    Serial.println("[BOOT] PSX analog config   SKIPPED (no controller)");
   }
-
-  bootMark("PSX analog config", psx_enable_analog_mode());
 
   Serial.println("[BOOT] Starting Bluetooth HID...");
   bleGamepadBegin();
@@ -123,15 +127,13 @@ void setup() {
 
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
-  Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "AVAILABLE" : "DISABLED");
+  Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
   Serial.println("================================");
 }
 
 void loop() {
   if (!systemBooted) return;
 
-  // PSX polling remains disabled until the boot probe has confirmed a controller.
-  // This prevents an unconnected bus from flooding the serial console.
   if (psxReady) {
     psxReadController();
   }
