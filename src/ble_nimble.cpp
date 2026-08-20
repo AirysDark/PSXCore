@@ -6,7 +6,6 @@
 BleGamepad bleGamepad("PSXCore ESP32-S3", "AirysDark", 100);
 
 static bool lastConnected = false;
-static uint32_t lastButtonState = 0;
 
 static int16_t psxAxisToHid(uint8_t value) {
   // PS2 axes are unsigned 8-bit (0..255), while the default
@@ -14,20 +13,12 @@ static int16_t psxAxisToHid(uint8_t value) {
   return static_cast<int16_t>((static_cast<uint32_t>(value) * 32767U + 127U) / 255U);
 }
 
-static void setButton(uint8_t button, bool pressed, uint32_t mask) {
-  if (pressed) {
-    bleGamepad.press(button);
-  } else {
-    bleGamepad.release(button);
-  }
-}
-
 static void updatePsxButtons(uint32_t buttons) {
-  // PS2 button bits after the active-low -> active-high conversion:
+  // PS2 button bits after active-low -> active-high conversion:
   // Low byte:  SELECT, L3, R3, START, UP, RIGHT, DOWN, LEFT
   // High byte: L2, R2, L1, R1, TRIANGLE, CIRCLE, CROSS, SQUARE
   //
-  // BLE mapping deliberately follows a stable logical order:
+  // Stable BLE mapping:
   // 1 Square, 2 Cross, 3 Circle, 4 Triangle,
   // 5 L1, 6 R1, 7 L2, 8 R2, 9 L3, 10 R3,
   // 11 Select, 12 Start.
@@ -51,7 +42,11 @@ static void updatePsxButtons(uint32_t buttons) {
 
   for (const auto &entry : mapping) {
     const bool pressed = (buttons & (1UL << entry.psxBit)) != 0;
-    setButton(entry.hidButton, pressed, (1UL << entry.psxBit));
+    if (pressed) {
+      bleGamepad.press(entry.hidButton);
+    } else {
+      bleGamepad.release(entry.hidButton);
+    }
   }
 
   // D-pad is represented as HID hat 1 rather than four independent buttons.
@@ -69,8 +64,6 @@ static void updatePsxButtons(uint32_t buttons) {
   else if (down) bleGamepad.setHat1(HAT_DOWN);
   else if (left) bleGamepad.setHat1(HAT_LEFT);
   else bleGamepad.setHat1(HAT_CENTERED);
-
-  lastButtonState = buttons;
 }
 
 void ble_init() {
