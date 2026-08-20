@@ -1,8 +1,9 @@
-#include "pins.h"
+#include "psx_analog_mode.h"
+#include "psx_config.h"
 
-// Enable PSX analog mode request sequence.
-// Final timing validation is required against the controller ASIC.
-
+// Compatibility entry point for code that uses the older analog-mode API.
+// The actual controller configuration lives in psx_config.cpp so there is
+// one authoritative implementation of the PS2 0x43/0x44/0x43 sequence.
 void psxEnableAnalogMode() {
-    // TODO: send 0x43 config command sequence
+    (void)psx_enable_analog_mode();
 }
