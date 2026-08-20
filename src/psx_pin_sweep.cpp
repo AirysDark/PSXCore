@@ -17,10 +17,6 @@ void resetSweepPins() {
   }
 }
 
-// Probe the PSX data transaction without making ACK mandatory.
-// A controller response is the stronger indication that DATA/CMD/ATT/CLK
-// are correctly assigned. ACK is reported separately because some adapters
-// and controller revisions do not provide a conventional ACK level.
 bool probeMapping(const PsxPins& candidate, uint8_t& controllerId, bool& ackSeen) {
   psxSetPins(candidate, false);
   psxProtocolInit();
@@ -30,18 +26,13 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId, bool& ackSeen
   digitalWrite(psxPins.attention, HIGH);
   delayMicroseconds(50);
 
-  // Standard PSX transaction:
-  // Host: 01 42 00
-  // Pad : FF ID 5A
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
   uint8_t response0 = psxTransferByte(0x01);
   bool ack0 = psxLastTransferAcked();
-
   uint8_t response1 = psxTransferByte(0x42);
   bool ack1 = psxLastTransferAcked();
-
   uint8_t response2 = psxTransferByte(0x00);
   bool ack2 = psxLastTransferAcked();
 
@@ -51,9 +42,11 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId, bool& ackSeen
   digitalWrite(psxPins.attention, HIGH);
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
+  delayMicroseconds(30);
 
-  // Do NOT require ACK to identify a wiring permutation.
-  // FF + known controller ID + 5A proves the four data/control roles.
+  // A valid PSX response is sufficient to identify the four bus roles.
+  // ACK remains diagnostic because it is not reliably exposed by every
+  // controller/adapter combination.
   return response0 == 0xFF &&
          validControllerId(controllerId) &&
          response2 == 0x5A;
@@ -61,17 +54,11 @@ bool probeMapping(const PsxPins& candidate, uint8_t& controllerId, bool& ackSeen
 
 bool nextPermutation(int* values, int count) {
   int i = count - 2;
-  while (i >= 0 && values[i] >= values[i + 1]) {
-    --i;
-  }
-  if (i < 0) {
-    return false;
-  }
+  while (i >= 0 && values[i] >= values[i + 1]) --i;
+  if (i < 0) return false;
 
   int j = count - 1;
-  while (values[j] <= values[i]) {
-    --j;
-  }
+  while (values[j] <= values[i]) --j;
 
   int temp = values[i];
   values[i] = values[j];
@@ -100,11 +87,11 @@ bool psxPinSweep() {
 
   do {
     PsxPins candidate = {
-      permutation[0], // DATA
-      permutation[1], // COMMAND
-      permutation[2], // ATTENTION
-      permutation[3], // CLOCK
-      permutation[4]  // ACK
+      permutation[0],
+      permutation[1],
+      permutation[2],
+      permutation[3],
+      permutation[4]
     };
 
     ++attempts;
