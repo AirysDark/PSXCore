@@ -7,8 +7,18 @@
 // SD firmware update file:
 // /firmware/PSXCore.bin
 // No config files required.
+//
+// SD support is disabled until the external SD module is actually wired.
+// Enable it with -DPSXCORE_SD_ENABLED=1 in PlatformIO build_flags.
+#ifndef PSXCORE_SD_ENABLED
+#define PSXCORE_SD_ENABLED 0
+#endif
 
 bool sdUpdateCheck() {
+#if !PSXCORE_SD_ENABLED
+  Serial.println("BOOT: SD updater disabled (SD hardware not configured)");
+  return false;
+#else
   Serial.println("BOOT: checking SD updater");
 
   if (!SD.begin(SD_CS)) {
@@ -68,4 +78,5 @@ bool sdUpdateCheck() {
   ESP.restart();
 
   return true;
+#endif
 }
