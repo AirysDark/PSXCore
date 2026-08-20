@@ -27,41 +27,21 @@ void psxBegin() {
 }
 
 static bool probeOnce(uint8_t* controllerId, bool* ackSeenOut) {
-  uint8_t response0 = 0xFF;
-  uint8_t response1 = 0xFF;
-  uint8_t response2 = 0xFF;
-  bool ackSeen = false;
+  uint8_t response0 = psxTransferByte(0x01);
+  bool ackSeen = psxLastTransferAcked();
 
-  digitalWrite(psxPins.command, HIGH);
-  digitalWrite(psxPins.clock, HIGH);
-  digitalWrite(psxPins.attention, HIGH);
-  delayMicroseconds(50);
-
-  digitalWrite(psxPins.attention, LOW);
-  delayMicroseconds(20);
-
-  response0 = psxTransferByte(0x01);
-  ackSeen |= psxLastTransferAcked();
-  response1 = psxTransferByte(0x42);
-  ackSeen |= psxLastTransferAcked();
-  response2 = psxTransferByte(0x00);
+  uint8_t response1 = psxTransferByte(0x42);
   ackSeen |= psxLastTransferAcked();
 
-  digitalWrite(psxPins.attention, HIGH);
-  digitalWrite(psxPins.command, HIGH);
-  digitalWrite(psxPins.clock, HIGH);
-  delayMicroseconds(30);
+  uint8_t response2 = psxTransferByte(0x00);
+  ackSeen |= psxLastTransferAcked();
 
-  if (controllerId != nullptr) {
-    *controllerId = response1;
-  }
-  if (ackSeenOut != nullptr) {
-    *ackSeenOut = ackSeen;
-  }
+  if (controllerId != nullptr) *controllerId = response1;
+  if (ackSeenOut != nullptr) *ackSeenOut = ackSeen;
 
-  // DATA is authoritative for controller detection. ACK is useful diagnostic
-  // information, but some PSX adapters/controllers do not expose it reliably.
-  return response0 == 0xFF && validControllerId(response1) && response2 == 0x5A;
+  return response0 == 0xFF &&
+         validControllerId(response1) &&
+         response2 == 0x5A;
 }
 
 bool psxProbeController(uint8_t* controllerId) {
@@ -69,7 +49,22 @@ bool psxProbeController(uint8_t* controllerId) {
   uint8_t id = 0x00;
 
   for (uint8_t attempt = 1; attempt <= 3; ++attempt) {
-    if (probeOnce(&id, &ackSeen)) {
+    digitalWrite(psxPins.command, HIGH);
+    digitalWrite(psxPins.clock, HIGH);
+    digitalWrite(psxPins.attention, HIGH);
+    delayMicroseconds(50);
+
+    digitalWrite(psxPins.attention, LOW);
+    delayMicroseconds(20);
+
+    bool valid = probeOnce(&id, &ackSeen);
+
+    digitalWrite(psxPins.attention, HIGH);
+    digitalWrite(psxPins.command, HIGH);
+    digitalWrite(psxPins.clock, HIGH);
+    delayMicroseconds(30);
+
+    if (valid) {
       if (controllerId != nullptr) *controllerId = id;
       Serial.printf("[PSX] Controller response VALID (ID=%02X, ACK=%s, attempt=%u)\n",
                     id, ackSeen ? "YES" : "NO", attempt);
@@ -85,11 +80,16 @@ bool psxProbeController(uint8_t* controllerId) {
 
 void psxReadController() {
   static uint32_t diagnosticTransactions = 0;
-  static uint32_t noResponseReports = 0;
+
+  // The first three bytes returned by a standard PSX/PS2 poll are the
+  // response header to 01 42 00:
+  //   FF = response marker
+  //   41 = controller ID
+  //   5A = response/data marker
+  // The following bytes contain button and analog data.
   uint8_t packet[9] = {0};
   bool ackSeen = false;
 
-  // Give the controller a clean bus-idle interval before selecting it.
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
   digitalWrite(psxPins.attention, HIGH);
@@ -97,12 +97,17 @@ void psxReadController() {
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
-  psxTransferByte(0x01);
-  ackSeen |= psxLastTransferAcked();
-  psxTransferByte(0x42);
+  packet[0] = psxTransferByte(0x01);
   ackSeen |= psxLastTransferAcked();
 
-  for (int i = 0; i < 9; i++) {
+  packet[1] = psxTransferByte(0x42);
+  ackSeen |= psxLastTransferAcked();
+
+  packet[2] = psxTransferByte(0x00);
+  ackSeen |= psxLastTransferAcked();
+
+  // Decoder needs bytes 3..8: button low/high + LX/LY/RX/RY.
+  for (uint8_t i = 3; i < sizeof(packet); ++i) {
     packet[i] = psxTransferByte(0x00);
     ackSeen |= psxLastTransferAcked();
   }
@@ -111,27 +116,19 @@ void psxReadController() {
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
 
-  // Diagnostic output is deliberately bounded. Normal operation must never
-  // flood the serial monitor.
-  if (diagnosticTransactions < 3) {
+  if (diagnosticTransactions < 5) {
     Serial.printf("[PSX RAW %lu] ACK=%s", (unsigned long)diagnosticTransactions,
                   ackSeen ? "YES" : "NO");
-    for (uint8_t value : packet) {
-      Serial.printf(" %02X", value);
-    }
+    for (uint8_t value : packet) Serial.printf(" %02X", value);
     Serial.println();
     diagnosticTransactions++;
   }
 
-  // Do not require ACK for a valid controller. The controller ID and packet
-  // structure are the primary indication that DATA/CMD/ATT/CLK are working.
-  if (packet[0] != 0xFF || !validControllerId(packet[1])) {
+  if (packet[0] != 0xFF || !validControllerId(packet[1]) || packet[2] != 0x5A) {
     debugStatusPSXState(false);
-    noResponseReports++;
     return;
   }
 
-  noResponseReports = 0;
   decodePSXPacket(packet, controllerState);
   debugStatusPSXState(true);
 }
