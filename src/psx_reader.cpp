@@ -26,41 +26,61 @@ void psxBegin() {
                 psxPins.ack);
 }
 
-bool psxProbeController(uint8_t* controllerId) {
-  uint8_t packet[2] = {0xFF, 0xFF};
+static bool probeOnce(uint8_t* controllerId, bool* ackSeenOut) {
+  uint8_t response0 = 0xFF;
+  uint8_t response1 = 0xFF;
+  uint8_t response2 = 0xFF;
   bool ackSeen = false;
 
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
   digitalWrite(psxPins.attention, HIGH);
-  delayMicroseconds(30);
+  delayMicroseconds(50);
 
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
-  psxTransferByte(0x01);
+  response0 = psxTransferByte(0x01);
   ackSeen |= psxLastTransferAcked();
-
-  psxTransferByte(0x42);
+  response1 = psxTransferByte(0x42);
   ackSeen |= psxLastTransferAcked();
-
-  packet[0] = psxTransferByte(0x00);
-  ackSeen |= psxLastTransferAcked();
-
-  packet[1] = psxTransferByte(0x00);
+  response2 = psxTransferByte(0x00);
   ackSeen |= psxLastTransferAcked();
 
   digitalWrite(psxPins.attention, HIGH);
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
-
-  const bool valid = ackSeen && packet[0] == 0xFF && validControllerId(packet[1]);
+  delayMicroseconds(30);
 
   if (controllerId != nullptr) {
-    *controllerId = packet[1];
+    *controllerId = response1;
+  }
+  if (ackSeenOut != nullptr) {
+    *ackSeenOut = ackSeen;
   }
 
-  return valid;
+  // DATA is authoritative for controller detection. ACK is useful diagnostic
+  // information, but some PSX adapters/controllers do not expose it reliably.
+  return response0 == 0xFF && validControllerId(response1) && response2 == 0x5A;
+}
+
+bool psxProbeController(uint8_t* controllerId) {
+  bool ackSeen = false;
+  uint8_t id = 0x00;
+
+  for (uint8_t attempt = 1; attempt <= 3; ++attempt) {
+    if (probeOnce(&id, &ackSeen)) {
+      if (controllerId != nullptr) *controllerId = id;
+      Serial.printf("[PSX] Controller response VALID (ID=%02X, ACK=%s, attempt=%u)\n",
+                    id, ackSeen ? "YES" : "NO", attempt);
+      return true;
+    }
+
+    delay(2);
+  }
+
+  if (controllerId != nullptr) *controllerId = id;
+  return false;
 }
 
 void psxReadController() {
@@ -73,14 +93,12 @@ void psxReadController() {
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
   digitalWrite(psxPins.attention, HIGH);
-  delayMicroseconds(20);
+  delayMicroseconds(30);
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
-  // Standard PSX/PS2 poll command.
   psxTransferByte(0x01);
   ackSeen |= psxLastTransferAcked();
-
   psxTransferByte(0x42);
   ackSeen |= psxLastTransferAcked();
 
@@ -105,25 +123,11 @@ void psxReadController() {
     diagnosticTransactions++;
   }
 
-  // A completely idle PSX data bus reads as FF. Treat FF/FF as no response,
-  // rather than an unknown controller.
-  if (!ackSeen || (packet[0] == 0xFF && packet[1] == 0xFF)) {
+  // Do not require ACK for a valid controller. The controller ID and packet
+  // structure are the primary indication that DATA/CMD/ATT/CLK are working.
+  if (packet[0] != 0xFF || !validControllerId(packet[1])) {
     debugStatusPSXState(false);
     noResponseReports++;
-    return;
-  }
-
-  if (packet[0] != 0xFF) {
-    debugStatusPSXState(false);
-    return;
-  }
-
-  if (!validControllerId(packet[1])) {
-    if (noResponseReports == 0) {
-      Serial.printf("[PSX] Unknown controller ID: %02X\n", packet[1]);
-    }
-    noResponseReports++;
-    debugStatusPSXState(false);
     return;
   }
 
