@@ -81,12 +81,9 @@ bool psxProbeController(uint8_t* controllerId) {
 void psxReadController() {
   static uint32_t diagnosticTransactions = 0;
 
-  // The first three bytes returned by a standard PSX/PS2 poll are the
-  // response header to 01 42 00:
-  //   FF = response marker
-  //   41 = controller ID
-  //   5A = response/data marker
-  // The following bytes contain button and analog data.
+  // 0x42 response lengths:
+  //   ID 0x41 = digital mode: FF ID 5A buttonsLo buttonsHi
+  //   ID 0x73/0x79 = analog mode: FF ID 5A buttonsLo buttonsHi RX RY LX LY
   uint8_t packet[9] = {0};
   bool ackSeen = false;
 
@@ -97,18 +94,10 @@ void psxReadController() {
   digitalWrite(psxPins.attention, LOW);
   delayMicroseconds(20);
 
-  packet[0] = psxTransferByte(0x01);
-  ackSeen |= psxLastTransferAcked();
-
-  packet[1] = psxTransferByte(0x42);
-  ackSeen |= psxLastTransferAcked();
-
-  packet[2] = psxTransferByte(0x00);
-  ackSeen |= psxLastTransferAcked();
-
-  // Decoder needs bytes 3..8: button low/high + LX/LY/RX/RY.
-  for (uint8_t i = 3; i < sizeof(packet); ++i) {
-    packet[i] = psxTransferByte(0x00);
+  for (uint8_t i = 0; i < sizeof(packet); ++i) {
+    packet[i] = psxTransferByte(i == 0 ? 0x01 :
+                                i == 1 ? 0x42 :
+                                0x00);
     ackSeen |= psxLastTransferAcked();
   }
 
@@ -116,8 +105,9 @@ void psxReadController() {
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
 
-  if (diagnosticTransactions < 5) {
-    Serial.printf("[PSX RAW %lu] ACK=%s", (unsigned long)diagnosticTransactions,
+  if (diagnosticTransactions < 12) {
+    Serial.printf("[PSX RAW %lu] ACK=%s",
+                  (unsigned long)diagnosticTransactions,
                   ackSeen ? "YES" : "NO");
     for (uint8_t value : packet) Serial.printf(" %02X", value);
     Serial.println();
@@ -129,6 +119,17 @@ void psxReadController() {
     return;
   }
 
+  // Digital controllers return only the two button bytes. Keep those valid,
+  // but never interpret trailing bytes as analog axes unless the controller
+  // explicitly reports an analog-capable mode.
+  if (packet[1] == 0x41) {
+    packet[5] = 0x80;
+    packet[6] = 0x80;
+    packet[7] = 0x80;
+    packet[8] = 0x80;
+  }
+
   decodePSXPacket(packet, controllerState);
+  debugStatusPSXPacket();
   debugStatusPSXState(true);
 }
