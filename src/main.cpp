@@ -1,5 +1,5 @@
 // PSXCore ESP32-S3 firmware entry point
-// Safe boot diagnostics: each subsystem is isolated so an early reset can be located.
+// Startup is intentionally simple: wait 5 seconds, then initialize PSXCore.
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -14,13 +14,6 @@
 #include "psx_config.h"
 #include "sd_update.h"
 #include "debug_status.h"
-
-// This function is called by the Arduino startup layer before initArduino(),
-// global Arduino objects, setup(), or loop(). Keep this delay here so no
-// PSXCore application code starts until the ESP32-S3 has been stable for 5 s.
-extern "C" void initVariant(void) {
-  delay(5000);
-}
 
 static bool systemBooted = false;
 static bool psxReady = false;
@@ -63,6 +56,11 @@ static bool testPsram() {
 void setup() {
   Serial.begin(115200);
 
+  // Do not touch SD, PSX GPIO, BLE, NVS, or other PSXCore subsystems during
+  // the power-on settling period. This is a plain delay only; it never resets
+  // the ESP32-S3.
+  delay(5000);
+
   Serial.println();
   Serial.println("================================");
   Serial.println("          PSXCore BOOT");
@@ -84,14 +82,16 @@ void setup() {
 
   // SD is optional hardware. A missing card/module is never a boot failure.
   Serial.println("[BOOT] Checking optional SD update...");
-  bool sdOk = sdUpdateCheck();
-  if (sdOk) {
-    Serial.println("[BOOT] SD update available/handled");
-  } else {
-    Serial.println("[BOOT] No SD update - continuing");
+  const bool updateApplied = sdUpdateCheck();
+  if (updateApplied) {
+    // sdUpdateCheck() only returns true after a verified update. It performs
+    // the single required restart itself, so normal startup must stop here.
+    return;
   }
+  Serial.println("[BOOT] No SD update - continuing");
 
   Serial.println("[BOOT] Initializing PSX bus...");
+  psxPinsBegin();
   psxBegin();
 
   uint8_t controllerId = 0;
