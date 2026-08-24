@@ -2,34 +2,153 @@
 #include "PSXHIDDescriptor.h"
 
 static const NimBLEUUID HID_SERVICE("1812");
+static const NimBLEUUID BATTERY_SERVICE("180F");
 static const NimBLEUUID REPORT_MAP("2A4B");
 static const NimBLEUUID HID_INFO("2A4A");
 static const NimBLEUUID CONTROL_POINT("2A4C");
 static const NimBLEUUID PROTOCOL_MODE("2A4E");
 static const NimBLEUUID INPUT_REPORT("2A4D");
+static const NimBLEUUID BATTERY_LEVEL("2A19");
 
 bool PSXBLEGamepad::begin(const char* deviceName) {
+    if (_started) {
+        return true;
+    }
+
     NimBLEDevice::init(deviceName);
-    _server=NimBLEDevice::createServer();
+
+    _server = NimBLEDevice::createServer();
+    if (_server == nullptr) {
+        return false;
+    }
+
     _server->setCallbacks(this);
-    NimBLEService* hid=_server->createService(HID_SERVICE);
-    NimBLECharacteristic* map=hid->createCharacteristic(REPORT_MAP,NIMBLE_PROPERTY::READ);
-    map->setValue(PSX_HID_REPORT_DESCRIPTOR,PSX_HID_REPORT_DESCRIPTOR_SIZE);
-    NimBLECharacteristic* info=hid->createCharacteristic(HID_INFO,NIMBLE_PROPERTY::READ);
-    const uint8_t hidInfo[]={0x11,0x01,0x00,0x02}; info->setValue(hidInfo,sizeof(hidInfo));
-    hid->createCharacteristic(CONTROL_POINT,NIMBLE_PROPERTY::WRITE_NR);
-    NimBLECharacteristic* protocol=hid->createCharacteristic(PROTOCOL_MODE,NIMBLE_PROPERTY::READ|NIMBLE_PROPERTY::WRITE_NR);
-    protocol->setValue((uint8_t)0x01);
-    _input=hid->createCharacteristic(INPUT_REPORT,NIMBLE_PROPERTY::READ|NIMBLE_PROPERTY::NOTIFY);
+
+    NimBLEService* hid = _server->createService(HID_SERVICE);
+    if (hid == nullptr) {
+        return false;
+    }
+
+    NimBLECharacteristic* reportMap = hid->createCharacteristic(
+        REPORT_MAP, NIMBLE_PROPERTY::READ
+    );
+    reportMap->setValue(PSX_HID_REPORT_DESCRIPTOR, PSX_HID_REPORT_DESCRIPTOR_SIZE);
+
+    NimBLECharacteristic* hidInfo = hid->createCharacteristic(
+        HID_INFO, NIMBLE_PROPERTY::READ
+    );
+    const uint8_t info[] = {0x11, 0x01, 0x00, 0x02};
+    hidInfo->setValue(info, sizeof(info));
+
+    hid->createCharacteristic(
+        CONTROL_POINT, NIMBLE_PROPERTY::WRITE_NR
+    );
+
+    NimBLECharacteristic* protocolMode = hid->createCharacteristic(
+        PROTOCOL_MODE, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE_NR
+    );
+    const uint8_t reportProtocol = 0x01;
+    protocolMode->setValue(&reportProtocol, sizeof(reportProtocol));
+
+    _input = hid->createCharacteristic(
+        INPUT_REPORT,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    );
+    _input->setValue(reinterpret_cast<uint8_t*>(&_report), sizeof(_report));
+
     hid->start();
-    NimBLEAdvertising* advertising=NimBLEDevice::getAdvertising();
+
+    NimBLEService* batteryService = _server->createService(BATTERY_SERVICE);
+    if (batteryService != nullptr) {
+        _battery = batteryService->createCharacteristic(
+            BATTERY_LEVEL,
+            NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+        );
+        const uint8_t initialBattery = 100;
+        _battery->setValue(&initialBattery, sizeof(initialBattery));
+        batteryService->start();
+    }
+
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     advertising->addServiceUUID(HID_SERVICE);
+    advertising->addServiceUUID(BATTERY_SERVICE);
     advertising->setAppearance(0x03C4);
     advertising->start();
+
+    _started = true;
+    _connected = false;
     return true;
 }
-void PSXBLEGamepad::update(const PSXInputState& input){_report.buttons=input.buttons;_report.hat=input.hat;_report.lx=input.leftX;_report.ly=input.leftY;_report.rx=input.rightX;_report.ry=input.rightY;_report.l2=input.l2;_report.r2=input.r2;}
-bool PSXBLEGamepad::send(){if(!_connected||!_input)return false;_input->setValue(reinterpret_cast<uint8_t*>(&_report),sizeof(_report));return _input->notify();}
-bool PSXBLEGamepad::connected() const{return _connected;}
-void PSXBLEGamepad::onConnect(NimBLEServer*,NimBLEConnInfo&){_connected=true;}
-void PSXBLEGamepad::onDisconnect(NimBLEServer*,NimBLEConnInfo&,int){_connected=false;NimBLEDevice::getAdvertising()->start();}
+
+void PSXBLEGamepad::end() {
+    if (!_started) {
+        return;
+    }
+
+    _connected = false;
+    _started = false;
+    _input = nullptr;
+    _battery = nullptr;
+    _server = nullptr;
+    NimBLEDevice::deinit(true);
+}
+
+void PSXBLEGamepad::update(const PSXInputState& input) {
+    _report.buttons = input.connected ? input.buttons : 0;
+    _report.hat = input.connected ? input.hat : 8;
+    _report.lx = input.connected ? input.leftX : 0;
+    _report.ly = input.connected ? input.leftY : 0;
+    _report.rx = input.connected ? input.rightX : 0;
+    _report.ry = input.connected ? input.rightY : 0;
+    _report.l2 = input.connected ? input.l2 : 0;
+    _report.r2 = input.connected ? input.r2 : 0;
+}
+
+bool PSXBLEGamepad::send(const PSXInputState& input) {
+    update(input);
+    return send();
+}
+
+bool PSXBLEGamepad::send() {
+    if (!_started || !_connected || _input == nullptr) {
+        return false;
+    }
+
+    _input->setValue(reinterpret_cast<uint8_t*>(&_report), sizeof(_report));
+    return _input->notify();
+}
+
+bool PSXBLEGamepad::connected() const {
+    return _connected;
+}
+
+bool PSXBLEGamepad::started() const {
+    return _started;
+}
+
+void PSXBLEGamepad::setBatteryLevel(uint8_t percent) {
+    if (_battery == nullptr) {
+        return;
+    }
+
+    if (percent > 100) {
+        percent = 100;
+    }
+
+    _battery->setValue(&percent, sizeof(percent));
+    if (_connected) {
+        _battery->notify();
+    }
+}
+
+void PSXBLEGamepad::onConnect(NimBLEServer*, NimBLEConnInfo&) {
+    _connected = true;
+}
+
+void PSXBLEGamepad::onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) {
+    _connected = false;
+
+    if (_started) {
+        NimBLEDevice::getAdvertising()->start();
+    }
+}
