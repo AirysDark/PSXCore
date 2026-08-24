@@ -59,7 +59,7 @@ void setup() {
   // Do not touch SD, PSX GPIO, BLE, NVS, or other PSXCore subsystems during
   // the power-on settling period. This is a plain delay only; it never resets
   // the ESP32-S3.
-  delay(5000);
+  // delay(5000);
 
   Serial.println();
   Serial.println("================================");
