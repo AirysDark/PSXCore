@@ -5,6 +5,7 @@
 #include <Preferences.h>
 
 #include "pins.h"
+#include "version.h"
 #include "controller_state.h"
 #include "psx_reader.h"
 #include "psx_pin_sweep.h"
@@ -60,6 +61,7 @@ void setup() {
   Serial.println("================================");
   Serial.println("          PSXCore BOOT");
   Serial.println("================================");
+  Serial.printf("[BOOT] Version          %s\n", PSXCORE_VERSION_STRING);
 
   debugStatusInit();
   bootMark("Debug system", true);
@@ -127,6 +129,7 @@ void setup() {
 
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
+  Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
   Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
   Serial.println("================================");
 }
