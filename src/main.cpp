@@ -1,5 +1,4 @@
 // PSXCore ESP32-S3 firmware entry point
-// Startup is intentionally simple: wait 5 seconds, then initialize PSXCore.
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -56,11 +55,6 @@ static bool testPsram() {
 void setup() {
   Serial.begin(115200);
 
-  // Do not touch SD, PSX GPIO, BLE, NVS, or other PSXCore subsystems during
-  // the power-on settling period. This is a plain delay only; it never resets
-  // the ESP32-S3.
-  // delay(5000);
-
   Serial.println();
   Serial.println("================================");
   Serial.println("          PSXCore BOOT");
@@ -80,12 +74,9 @@ void setup() {
   bootMark("PSRAM test", testPsram());
   bootMark("NVS test", testNvs());
 
-  // SD is optional hardware. A missing card/module is never a boot failure.
   Serial.println("[BOOT] Checking optional SD update...");
   const bool updateApplied = sdUpdateCheck();
   if (updateApplied) {
-    // sdUpdateCheck() only returns true after a verified update. It performs
-    // the single required restart itself, so normal startup must stop here.
     return;
   }
   Serial.println("[BOOT] No SD update - continuing");
