@@ -15,6 +15,13 @@
 #include "sd_update.h"
 #include "debug_status.h"
 
+// This function is called by the Arduino startup layer before initArduino(),
+// global Arduino objects, setup(), or loop(). Keep this delay here so no
+// PSXCore application code starts until the ESP32-S3 has been stable for 5 s.
+extern "C" void initVariant(void) {
+  delay(5000);
+}
+
 static bool systemBooted = false;
 static bool psxReady = false;
 
@@ -55,10 +62,6 @@ static bool testPsram() {
 
 void setup() {
   Serial.begin(115200);
-
-  // Give the full ESP32-S3 DevKit time to stabilise after reset and allow
-  // the USB serial monitor to attach before any peripheral initialisation.
-  delay(5000);
 
   Serial.println();
   Serial.println("================================");
