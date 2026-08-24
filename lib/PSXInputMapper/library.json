@@ -1,0 +1,1 @@
+{"name":"PSXInputMapper","version":"0.1.0","frameworks":"arduino","platforms":"espressif32","dependencies":[{"name":"PSXController","version":"*"}],"description":"PSXCore input normalization and mapping"}
