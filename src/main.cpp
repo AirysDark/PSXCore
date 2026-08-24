@@ -55,7 +55,10 @@ static bool testPsram() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+
+  // Give the full ESP32-S3 DevKit time to stabilise after reset and allow
+  // the USB serial monitor to attach before any peripheral initialisation.
+  delay(5000);
 
   Serial.println();
   Serial.println("================================");
