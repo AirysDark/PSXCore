@@ -50,7 +50,6 @@ static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
 
 bool psxCoreGattRefreshAdvertising() {
-    // Advertising is owned centrally by ble_nimble.cpp.
     return true;
 }
 
@@ -63,6 +62,21 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     if (!server) {
         Serial.println("[PSX-GATT] NimBLE server not ready yet");
         return false;
+    }
+
+    /*
+     * Critical ordering rule:
+     * Do not modify the shared GATT database while the device is advertising.
+     * Some Android stacks can cache the database that existed when the first
+     * connection was made. Stop advertising, build and start the complete
+     * PSXCore service, then let ble_nimble.cpp restart shared advertising.
+     */
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    bool wasAdvertising = advertising && advertising->isAdvertising();
+    if (wasAdvertising) {
+        Serial.println("[PSX-GATT] Stopping advertising before GATT database update");
+        advertising->stop();
+        delay(20);
     }
 
     gattInitializing = true;
@@ -100,20 +114,20 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
 
-    Serial.println("[PSX-GATT] Starting service");
+    Serial.println("[PSX-GATT] Starting complete custom service before advertising");
     psxService->start();
 
-    // Do not mark the companion channel ready until the service has been
-    // explicitly started in the shared GATT database.
     gattReady = true;
     gattInitializing = false;
 
     Serial.println("[PSX-GATT] Service registered successfully");
     Serial.println("[PSX-GATT] Custom PSXCore service READY on shared NimBLE server");
+    Serial.println("[PSX-GATT] GATT DATABASE: HID + PSXCore companion");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
+    Serial.println("[PSX-GATT] Shared advertising may now restart");
     return true;
 }
 
