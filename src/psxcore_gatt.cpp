@@ -51,7 +51,6 @@ static OtaDataCallbacks otaDataCallbacks;
 
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     rxCallbacks = callbacks;
-
     if (gattReady) return true;
     if (gattInitializing) return false;
 
@@ -62,7 +61,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     gattInitializing = true;
-
     psxService = server->createService(SERVICE_UUID);
     if (!psxService) {
         gattInitializing = false;
@@ -87,11 +85,8 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
 
-    responseChar->createDescriptor("2902");
-    stateChar->createDescriptor("2902");
-    otaStatusChar->createDescriptor("2902");
-
-    psxService->start();
+    // NimBLE-Arduino automatically manages the CCCD (0x2902) for NOTIFY characteristics.
+    // Do not manually create descriptors here.
     gattReady = true;
     gattInitializing = false;
 
