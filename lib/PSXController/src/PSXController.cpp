@@ -7,24 +7,34 @@ bool PSXController::begin(const PSXControllerPins& pins,const PSXControllerConfi
 bool PSXController::begin(){
     if(_pins.data<0||_pins.command<0||_pins.attention<0||_pins.clock<0) return false;
     pinMode(_pins.data,INPUT_PULLUP); pinMode(_pins.command,OUTPUT); pinMode(_pins.attention,OUTPUT); pinMode(_pins.clock,OUTPUT);
+    if(_pins.analogButton>=0){
+        pinMode(_pins.analogButton,_config.analogButtonActiveLow?INPUT_PULLUP:INPUT);
+        _analogButtonRaw=_config.analogButtonActiveLow?!digitalRead(_pins.analogButton):digitalRead(_pins.analogButton);
+        _analogButtonPressed=_analogButtonRaw;
+    }
     digitalWrite(_pins.command,HIGH); digitalWrite(_pins.attention,HIGH); digitalWrite(_pins.clock,HIGH);
     resetState(); _started=true; delay(50);
     if(!poll()) return false;
+    _lastAnalogMode=_state.analogMode;
     if(_config.requestAnalog||_config.requestPressure) configure();
     return poll();
 }
 
-void PSXController::end(){ _started=false; resetState(); }
+void PSXController::end(){ _started=false; resetState(); _systemEvent=PSXSystemButtonEvent::None; _analogButtonPressed=false; _analogLongPressSent=false; }
 
 bool PSXController::update(){
     if(!_started) return false;
+    updateAnalogButton();
     const bool ok=poll();
+    updateAnalogModeEvent();
     const bool needsConfig=_state.connected&&((_config.requestAnalog&&!_state.analogMode)||(_config.requestPressure&&!_state.pressureMode));
     const uint32_t now=millis();
     if((!ok||needsConfig)&&(now-_lastConfigAttempt>=_config.retryIntervalMs)){
         _lastConfigAttempt=now;
         configure();
-        return poll();
+        const bool repoll=poll();
+        updateAnalogModeEvent();
+        return repoll;
     }
     return ok;
 }
@@ -36,6 +46,10 @@ bool PSXController::analogMode() const { return _state.analogMode; }
 bool PSXController::pressureMode() const { return _state.pressureMode; }
 PSXControllerMode PSXController::mode() const { return static_cast<PSXControllerMode>(_state.mode); }
 bool PSXController::pressed(PSXButton button) const { return (_state.buttons&(1u<<static_cast<uint8_t>(button)))!=0; }
+bool PSXController::analogButtonPressed() const { return _analogButtonPressed; }
+PSXSystemButtonEvent PSXController::systemEvent(){ const auto event=_systemEvent; _systemEvent=PSXSystemButtonEvent::None; return event; }
+PSXSystemButtonEvent PSXController::peekSystemEvent() const { return _systemEvent; }
+void PSXController::clearSystemEvent(){ _systemEvent=PSXSystemButtonEvent::None; }
 
 uint8_t PSXController::pressure(PSXButton button) const {
     switch(button){
@@ -74,6 +88,39 @@ bool PSXController::enablePressureMode(bool enabled){
 const PSXControllerPins& PSXController::pins() const { return _pins; }
 const PSXControllerConfig& PSXController::config() const { return _config; }
 void PSXController::resetState(){ _state=PSXControllerState{}; }
+
+void PSXController::setSystemEvent(PSXSystemButtonEvent event){
+    // Preserve the first unread event so a short press cannot overwrite a wake event.
+    if(_systemEvent==PSXSystemButtonEvent::None) _systemEvent=event;
+}
+
+void PSXController::updateAnalogButton(){
+    if(_pins.analogButton<0) return;
+    const uint32_t now=millis();
+    const bool raw=_config.analogButtonActiveLow?!digitalRead(_pins.analogButton):digitalRead(_pins.analogButton);
+    if(raw!=_analogButtonRaw){ _analogButtonRaw=raw; _analogButtonChangedAt=now; }
+    if((now-_analogButtonChangedAt)>=_config.analogButtonDebounceMs && _analogButtonPressed!=_analogButtonRaw){
+        _analogButtonPressed=_analogButtonRaw;
+        if(_analogButtonPressed){
+            _analogButtonPressedAt=now;
+            _analogLongPressSent=false;
+            setSystemEvent(PSXSystemButtonEvent::AnalogPressed);
+        }else{
+            setSystemEvent(PSXSystemButtonEvent::AnalogReleased);
+            if(!_analogLongPressSent) setSystemEvent(PSXSystemButtonEvent::AnalogShortPress);
+        }
+    }
+    if(_analogButtonPressed&&!_analogLongPressSent&&(now-_analogButtonPressedAt)>=_config.analogButtonLongPressMs){
+        _analogLongPressSent=true;
+        setSystemEvent(PSXSystemButtonEvent::AnalogLongPress);
+    }
+}
+
+void PSXController::updateAnalogModeEvent(){
+    if(_state.analogMode==_lastAnalogMode) return;
+    _lastAnalogMode=_state.analogMode;
+    setSystemEvent(_state.analogMode?PSXSystemButtonEvent::AnalogModeEnabled:PSXSystemButtonEvent::AnalogModeDisabled);
+}
 
 uint8_t PSXController::transfer(uint8_t value){
     uint8_t result=0;
