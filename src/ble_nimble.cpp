@@ -138,21 +138,11 @@ static bool finishOta() {
     return true;
 }
 
-static int16_t psxAxisToHid(uint8_t v) {
-    return (int16_t)((uint32_t(v) * 32767U + 127U) / 255U);
-}
+static int16_t psxAxisToHid(uint8_t v) { return (int16_t)((uint32_t(v) * 32767U + 127U) / 255U); }
 
-static void sendConfigHello() {
-    bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");
-}
-
-static void sendInfo() {
-    bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");
-}
-
-static void sendSettings() {
-    bleConfigSendText("{\"type\":\"settings\",\"analogControl\":true,\"sleepMinutes\":5}\n");
-}
+static void sendConfigHello() { bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n"); }
+static void sendInfo() { bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n"); }
+static void sendSettings() { bleConfigSendText("{\"type\":\"settings\",\"analogControl\":true,\"sleepMinutes\":5}\n"); }
 
 static void handleCommand(const uint8_t* data, size_t length) {
     if (!data || !length) return;
@@ -167,9 +157,7 @@ static void handleCommand(const uint8_t* data, size_t length) {
     else if (command == "SET_ANALOG") {
         psxEnableAnalogMode();
         bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");
-    } else {
-        bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");
-    }
+    } else bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");
 }
 
 static void handleOtaControl(const uint8_t* data, size_t length) {
@@ -187,57 +175,24 @@ static void handleOtaControl(const uint8_t* data, size_t length) {
         if (!s.length() || end == s.c_str() || *end != '\0') abortOta("invalid_begin_command");
         else beginOta((size_t)v);
     } else if (command == "OTA_END") finishOta();
-    else if (command == "OTA_RESET") {
-        if (Update.isRunning()) Update.abort();
-        resetOtaState();
-        sendOtaInfo();
-    } else {
-        sendOtaText("{\"type\":\"ota\",\"state\":\"error\",\"reason\":\"unknown_control_command\"}\n");
-    }
+    else if (command == "OTA_RESET") { if (Update.isRunning()) Update.abort(); resetOtaState(); sendOtaInfo(); }
+    else sendOtaText("{\"type\":\"ota\",\"state\":\"error\",\"reason\":\"unknown_control_command\"}\n");
 }
 
-static void handleOtaData(const uint8_t* data, size_t length) {
-    if (data && length) writeOtaChunk(data, length);
-}
+static void handleOtaData(const uint8_t* data, size_t length) { if (data && length) writeOtaChunk(data, length); }
 
-static NimBLEServer* sharedServer() {
-    return NimBLEDevice::getServer();
-}
-
-static bool nimbleHostReady() {
-    return sharedServer() != nullptr;
-}
-
-static bool hasActiveBleClient() {
-    NimBLEServer* server = sharedServer();
-    return server && server->getConnectedCount() > 0;
-}
+static NimBLEServer* sharedServer() { return NimBLEDevice::getServer(); }
+static bool nimbleHostReady() { return sharedServer() != nullptr; }
+static bool hasActiveBleClient() { NimBLEServer* server = sharedServer(); return server && server->getConnectedCount() > 0; }
 
 static void configureSharedAdvertising() {
-    if (!nimbleHostReady()) {
-        advertisingConfigured = false;
-        Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST");
-        return;
-    }
-
+    if (!nimbleHostReady()) { advertisingConfigured = false; Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST"); return; }
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-    if (!advertising) {
-        advertisingConfigured = false;
-        Serial.println("[BLE] Advertising ERROR: object unavailable");
-        return;
-    }
+    if (!advertising) { advertisingConfigured = false; Serial.println("[BLE] Advertising ERROR: object unavailable"); return; }
 
-    // Priority 3: one physical BLE client. HID and PSXCore custom GATT are
-    // services on that same connection, not separate device connections.
-    advertising->setMaxConnections(1);
-
-    // Priority 2: do not stop/reset/start advertising while a client is
-    // connected. A connected BLE peripheral is expected to stop advertising.
-    if (hasActiveBleClient()) {
-        advertisingConfigured = true;
-        Serial.println("[BLE] Advertising configuration deferred: client connected");
-        return;
-    }
+    // Priority 2: never reset or restart advertising while the shared BLE
+    // connection is active. Inactive advertising during a connection is normal.
+    if (hasActiveBleClient()) { advertisingConfigured = true; return; }
 
     if (advertising->isAdvertising()) advertising->stop();
     advertising->reset();
@@ -253,12 +208,6 @@ static void configureSharedAdvertising() {
 
     advertising->setAppearance(0x03C4);
     advertisingConfigured = true;
-
-    if (advertising->isAdvertising()) {
-        Serial.println("[BLE] Shared advertising: ALREADY ON");
-        return;
-    }
-
     bool started = advertising->start();
     delay(50);
     bool active = started && advertising->isAdvertising();
@@ -266,7 +215,7 @@ static void configureSharedAdvertising() {
     if (active) {
         Serial.printf("[BLE] DISCOVERABLE NAME: %s\n", BLE_DEVICE_NAME);
         Serial.println("[BLE] ONE DEVICE: HID gamepad + PSXCore custom GATT");
-        Serial.println("[BLE] MAX CLIENT CONNECTIONS: 1");
+        Serial.println("[BLE] CONNECTION LIMIT: 1 shared client");
     }
 }
 
@@ -275,15 +224,11 @@ static void ensureAdvertising() {
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     if (!advertising) return;
 
-    // Priority 2 fix: do not restart advertising just because it is inactive
-    // while a client is connected. This was causing the repeated restart race.
+    // Priority 2 fix: the peripheral stops advertising while connected. Do not
+    // mistake that normal state for a failure and repeatedly call start().
     if (hasActiveBleClient()) return;
 
-    if (!advertisingConfigured) {
-        configureSharedAdvertising();
-        return;
-    }
-
+    if (!advertisingConfigured) { configureSharedAdvertising(); return; }
     if (advertising->isAdvertising()) return;
 
     bool started = advertising->start();
@@ -303,24 +248,11 @@ static void tryInitPsxCoreGatt() {
 
 static void updatePsxButtons(uint32_t b) {
     static const struct { uint8_t psxBit; uint8_t hidButton; } m[] = {
-        {15, BUTTON_1}, {14, BUTTON_2}, {13, BUTTON_3}, {12, BUTTON_4},
-        {10, BUTTON_5}, {11, BUTTON_6}, {8, BUTTON_7}, {9, BUTTON_8},
-        {1, BUTTON_9}, {2, BUTTON_10}, {0, BUTTON_11}, {3, BUTTON_12}
+        {15,BUTTON_1},{14,BUTTON_2},{13,BUTTON_3},{12,BUTTON_4},{10,BUTTON_5},{11,BUTTON_6},{8,BUTTON_7},{9,BUTTON_8},{1,BUTTON_9},{2,BUTTON_10},{0,BUTTON_11},{3,BUTTON_12}
     };
-    for (const auto& e : m) {
-        if (b & (1UL << e.psxBit)) bleGamepad.press(e.hidButton);
-        else bleGamepad.release(e.hidButton);
-    }
-    bool u = b & (1UL << 4), r = b & (1UL << 5), d = b & (1UL << 6), l = b & (1UL << 7);
-    if (u && r) bleGamepad.setHat1(HAT_UP_RIGHT);
-    else if (r && d) bleGamepad.setHat1(HAT_DOWN_RIGHT);
-    else if (d && l) bleGamepad.setHat1(HAT_DOWN_LEFT);
-    else if (l && u) bleGamepad.setHat1(HAT_UP_LEFT);
-    else if (u) bleGamepad.setHat1(HAT_UP);
-    else if (r) bleGamepad.setHat1(HAT_RIGHT);
-    else if (d) bleGamepad.setHat1(HAT_DOWN);
-    else if (l) bleGamepad.setHat1(HAT_LEFT);
-    else bleGamepad.setHat1(HAT_CENTERED);
+    for (const auto& e : m) { if (b & (1UL << e.psxBit)) bleGamepad.press(e.hidButton); else bleGamepad.release(e.hidButton); }
+    bool u=b&(1UL<<4), r=b&(1UL<<5), d=b&(1UL<<6), l=b&(1UL<<7);
+    if (u&&r) bleGamepad.setHat1(HAT_UP_RIGHT); else if (r&&d) bleGamepad.setHat1(HAT_DOWN_RIGHT); else if (d&&l) bleGamepad.setHat1(HAT_DOWN_LEFT); else if (l&&u) bleGamepad.setHat1(HAT_UP_LEFT); else if (u) bleGamepad.setHat1(HAT_UP); else if (r) bleGamepad.setHat1(HAT_RIGHT); else if (d) bleGamepad.setHat1(HAT_DOWN); else if (l) bleGamepad.setHat1(HAT_LEFT); else bleGamepad.setHat1(HAT_CENTERED);
 }
 
 void ble_init() {
@@ -342,20 +274,9 @@ void ble_init() {
 }
 
 void ble_send_report() {
-    if (!configReady && configInitPending && (uint32_t)(millis() - lastConfigInitAttempt) >= 250) {
-        lastConfigInitAttempt = millis();
-        tryInitPsxCoreGatt();
-    }
-    if ((uint32_t)(millis() - lastAdvertisingCheck) >= 500) {
-        lastAdvertisingCheck = millis();
-        ensureAdvertising();
-    }
-    if (otaState == OtaState::Success && otaCompletedAt && (uint32_t)(millis() - otaCompletedAt) >= 1500) {
-        Serial.println("[OTA] RESTART NOW");
-        delay(50);
-        ESP.restart();
-        return;
-    }
+    if (!configReady && configInitPending && (uint32_t)(millis() - lastConfigInitAttempt) >= 250) { lastConfigInitAttempt = millis(); tryInitPsxCoreGatt(); }
+    if ((uint32_t)(millis() - lastAdvertisingCheck) >= 500) { lastAdvertisingCheck = millis(); ensureAdvertising(); }
+    if (otaState == OtaState::Success && otaCompletedAt && (uint32_t)(millis() - otaCompletedAt) >= 1500) { Serial.println("[OTA] RESTART NOW"); delay(50); ESP.restart(); return; }
 
     bool connected = bleGamepad.isConnected();
     debugStatusBLEState(connected);
@@ -386,11 +307,9 @@ void bleConfigNotifyControllerState() {
     const ControllerState& s = controllerState;
     bool changed = s.buttons != lastStateButtons || s.lx != lastStateLx || s.ly != lastStateLy || s.rx != lastStateRx || s.ry != lastStateRy;
     if (!changed) return;
-
     char m[160];
     snprintf(m, sizeof(m), "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u}\n", (unsigned long)s.buttons, s.lx, s.ly, s.rx, s.ry);
     psxCoreGattSendStateText(m);
-
     lastStateButtons = s.buttons;
     lastStateLx = s.lx;
     lastStateLy = s.ly;
