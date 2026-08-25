@@ -104,14 +104,17 @@ class BleConnectionManager(private val context: Context) {
     private val otaStatusBuffer = StringBuilder()
 
     private var isConnecting = false
+    private var activeAttemptId = 0
     private var serviceDiscoveryRetried = false
     private val handler = Handler(Looper.getMainLooper())
-    private val timeoutRunnable = Runnable {
-        if (isConnecting) {
-            Log.e(tag, "[BLE] Connection timeout")
-            handleError()
+    
+    private class TimeoutRunnable(val attemptId: Int, val manager: BleConnectionManager) : Runnable {
+        override fun run() {
+            manager.onConnectionTimeout(attemptId)
         }
     }
+
+    private var currentTimeout: TimeoutRunnable? = null
 
     private val descriptorQueue = mutableListOf<BluetoothGattDescriptor>()
 
@@ -119,70 +122,77 @@ class BleConnectionManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val address = gatt.device.address
-            Log.d(tag, "[BLE] onConnectionStateChange: address=$address, status=$status, newState=$newState")
+            val attemptId = activeAttemptId
+            Log.d(tag, "[BLE][$attemptId] onConnectionStateChange: address=$address, status=$status, newState=$newState")
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.e(tag, "[BLE] GATT error: $status")
-                handleError()
+                Log.e(tag, "[BLE][$attemptId] GATT error: $status")
+                handleError(attemptId)
                 return
             }
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    Log.d(tag, "[BLE] Connected to GATT server")
+                    Log.d(tag, "[BLE][$attemptId] STATE_CONNECTED. Cancelling timeout.")
+                    handler.removeCallbacksAndMessages(null)
+                    currentTimeout = null
+                    
                     _connectionState.value = ConnectionState.DISCOVERING_SERVICES
                     serviceDiscoveryRetried = false
+                    Log.d(tag, "[BLE][$attemptId] Starting service discovery")
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    Log.d(tag, "[BLE] Disconnected from GATT server")
-                    handleDisconnect()
+                    Log.d(tag, "[BLE][$attemptId] STATE_DISCONNECTED")
+                    handleDisconnect(attemptId)
                 }
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            val attemptId = activeAttemptId
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d(tag, "[BLE] Services discovered")
+                Log.d(tag, "[BLE][$attemptId] Services discovered")
                 
-                // Request higher MTU
                 gatt.requestMtu(512)
                 
-                Log.d(tag, "[BLE] Discovered service UUIDs:")
+                Log.d(tag, "[BLE][$attemptId] Discovered service UUIDs:")
                 gatt.services.forEach { service ->
-                    Log.d(tag, "[BLE]   - ${service.uuid}")
+                    Log.d(tag, "[BLE][$attemptId]   - ${service.uuid}")
                 }
 
                 val psxService = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
                 if (psxService == null && !serviceDiscoveryRetried) {
-                    Log.w(tag, "[BLE] PSXCore service not found. Retrying discovery in 1s (stale cache?)")
+                    Log.w(tag, "[BLE][$attemptId] PSXCore service not found. Retrying discovery in 1s (stale cache?)")
                     serviceDiscoveryRetried = true
                     handler.postDelayed({
-                        gatt.discoverServices()
+                        if (activeAttemptId == attemptId) {
+                            gatt.discoverServices()
+                        }
                     }, 1000)
                     return
                 }
 
                 if (psxService != null) {
+                    Log.d(tag, "[BLE][$attemptId] PSXCore service found. Enabling notifications.")
                     _connectionState.value = ConnectionState.ENABLING_NOTIFICATIONS
                     setupCharacteristics(gatt)
                 } else {
-                    Log.e(tag, "[BLE] PSXCore custom service MISSING after retry! UUID: ${ProtocolConstants.PSXCORE_SERVICE_UUID}")
+                    Log.e(tag, "[BLE][$attemptId] PSXCore custom service MISSING after retry! UUID: ${ProtocolConstants.PSXCORE_SERVICE_UUID}")
                     _connectionState.value = ConnectionState.COMPANION_MISSING
                     val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
                     _isGamepadServiceReady.value = hidService != null
                     isConnecting = false
-                    handler.removeCallbacks(timeoutRunnable)
                 }
             } else {
-                Log.e(tag, "[BLE] Service discovery failed with status: $status")
-                handleError()
+                Log.e(tag, "[BLE][$attemptId] Service discovery failed with status: $status")
+                handleError(attemptId)
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            Log.d(tag, "[BLE] MTU changed to $mtu, status=$status")
+            Log.d(tag, "[BLE][${activeAttemptId}] MTU changed to $mtu, status=$status")
         }
 
         @Deprecated("Deprecated in Java")
@@ -203,12 +213,13 @@ class BleConnectionManager(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            val attemptId = activeAttemptId
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d(tag, "[BLE] Descriptor write success: ${descriptor.characteristic.uuid}")
+                Log.d(tag, "[BLE][$attemptId] Descriptor write success: ${descriptor.characteristic.uuid}")
                 processNextDescriptor(gatt)
             } else {
-                Log.e(tag, "[BLE] Descriptor write failed: $status")
-                handleError()
+                Log.e(tag, "[BLE][$attemptId] Descriptor write failed: $status")
+                handleError(attemptId)
             }
         }
 
@@ -225,7 +236,9 @@ class BleConnectionManager(private val context: Context) {
             }
             
             synchronized(textWriteQueue) {
-                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeFirst()
+                if (textWriteQueue.isNotEmpty()) {
+                    textWriteQueue.removeFirst()
+                }
                 textWriteInProgress = false
             }
             processNextTextWrite(gatt)
@@ -234,22 +247,22 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun processNextDescriptor(gatt: BluetoothGatt) {
+        val attemptId = activeAttemptId
         val descriptor = synchronized(descriptorQueue) {
             if (descriptorQueue.isNotEmpty()) descriptorQueue.removeAt(0) else null
         }
         
         if (descriptor != null) {
             if (!writeDescriptorCompat(gatt, descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
-                Log.e(tag, "[BLE] Failed to start descriptor write")
-                handleError()
+                Log.e(tag, "[BLE][$attemptId] Failed to start descriptor write")
+                handleError(attemptId)
             }
         } else {
-            Log.d(tag, "[BLE] All notifications enabled, Controller READY")
+            Log.d(tag, "[BLE][$attemptId] All notifications enabled, Controller READY")
             _connectionState.value = ConnectionState.READY
             _isCompanionServiceReady.value = true
             _isOtaReadyStatus.value = true
             isConnecting = false
-            handler.removeCallbacks(timeoutRunnable)
             
             // Request initial state after READY with spacing to avoid collision
             handler.postDelayed({ sendCommand(ProtocolConstants.CMD_GET_STATE) }, 200)
@@ -264,17 +277,11 @@ class BleConnectionManager(private val context: Context) {
         when (uuid) {
             ProtocolConstants.PSX_RESPONSE_UUID -> {
                 processStream(data, responseBuffer) { message ->
-                    Log.d(tag, "[BLE-RES] Incoming message: $message")
+                    Log.d(tag, "[BLE-RES] Incoming: $message")
                     _receivedData.value = message
                     if (message.startsWith("{")) {
-                        parser.parseDeviceInfo(message)?.let { 
-                            Log.d(tag, "[BLE] Parsed Info: v${it.firmwareVersion}")
-                            _deviceInfo.value = it 
-                        }
-                        parser.parseDeviceSettings(message)?.let { 
-                            Log.d(tag, "[BLE] Parsed Settings")
-                            _deviceSettings.value = it 
-                        }
+                        parser.parseDeviceInfo(message)?.let { _deviceInfo.value = it }
+                        parser.parseDeviceSettings(message)?.let { _deviceSettings.value = it }
                     } else if (message == "PONG") {
                         Log.d(tag, "[BLE] Received PONG")
                     }
@@ -293,15 +300,9 @@ class BleConnectionManager(private val context: Context) {
                 processStream(data, otaStatusBuffer) { message ->
                     Log.d(tag, "[BLE-OTA] Status: $message")
                     if (message.startsWith("{")) {
-                        parser.parseOtaReady(message)?.let { _otaReady.tryEmit(it) }
-                        if (parser.parseOtaSuccess(message)) _otaResult.tryEmit(Result.success(Unit))
-                        parser.parseOtaError(message)?.let { _otaResult.tryEmit(Result.failure(Exception(it))) }
-                    } else if (message.startsWith("OTA_PROGRESS:")) {
-                        // Handle legacy
-                    } else if (message == "OTA_READY") {
-                        _otaReady.tryEmit(180)
-                    } else if (message == "OTA_SUCCESS") {
-                        _otaResult.tryEmit(Result.success(Unit))
+                        parser.parseOtaStatus(message)?.let { status ->
+                            // Update OTA state in update manager
+                        }
                     }
                 }
             }
@@ -311,7 +312,6 @@ class BleConnectionManager(private val context: Context) {
     private fun processStream(data: ByteArray, buffer: StringBuilder, onMessage: (String) -> Unit) {
         val chunk = String(data, StandardCharsets.UTF_8)
         synchronized(buffer) {
-            // Safety: if buffer gets too large without a newline, something is wrong
             if (buffer.length > 4096) {
                 Log.w(tag, "[BLE] Stream buffer overflow ($tag); clearing stale data. Current buffer: ${buffer.toString()}")
                 buffer.setLength(0)
@@ -325,25 +325,16 @@ class BleConnectionManager(private val context: Context) {
                 buffer.delete(0, newlineIndex + 1)
                 
                 if (message.isNotEmpty()) {
-                    // Check for joined JSON objects like {"a":1}{"b":2} 
                     if (message.contains("}{")) {
                         Log.w(tag, "[BLE] Detected merged messages, splitting: $message")
                         val parts = message.replace("}{", "}\n{").split("\n")
                         parts.forEach { part ->
                             if (part.isNotEmpty()) {
-                                try {
-                                    onMessage(part)
-                                } catch (e: Exception) {
-                                    Log.e(tag, "[BLE] Error processing sub-message: ${e.message}")
-                                }
+                                try { onMessage(part) } catch (e: Exception) { Log.e(tag, "[BLE] Error: ${e.message}") }
                             }
                         }
                     } else {
-                        try {
-                            onMessage(message)
-                        } catch (e: Exception) {
-                            Log.e(tag, "[BLE] Error processing message: ${e.message}")
-                        }
+                        try { onMessage(message) } catch (e: Exception) { Log.e(tag, "[BLE] Error: ${e.message}") }
                     }
                 }
             }
@@ -352,19 +343,11 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
-        // Check for Gamepad Service
-        val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
-        if (hidService != null) {
-            Log.d(tag, "[BLE] Gamepad (HID) service found")
-            _isGamepadServiceReady.value = true
-        } else {
-            Log.w(tag, "[BLE] Gamepad (HID) service not found")
-            _isGamepadServiceReady.value = false
-        }
+        _isGamepadServiceReady.value = gatt.getService(ProtocolConstants.HID_SERVICE_UUID) != null
 
         val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
         if (service != null) {
-            Log.d(tag, "[BLE] PSXCore custom service found: ${service.uuid}")
+            Log.d(tag, "[BLE][${activeAttemptId}] PSXCore custom service found: ${service.uuid}")
             commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
             responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
             controllerStateChar = service.getCharacteristic(ProtocolConstants.PSX_CONTROLLER_STATE_UUID)
@@ -372,7 +355,6 @@ class BleConnectionManager(private val context: Context) {
             otaDataChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_DATA_UUID)
             otaStatusChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_STATUS_UUID)
 
-            // Queue up notifications
             synchronized(descriptorQueue) {
                 descriptorQueue.clear()
                 listOf(responseChar, controllerStateChar, otaStatusChar).filterNotNull().forEach { char ->
@@ -403,20 +385,58 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connect(address: String) {
-        if (isConnecting) return
+        if (isConnecting) {
+            Log.d(tag, "[BLE] connect() ignored - already connecting")
+            return
+        }
+        
+        if (_connectionState.value == ConnectionState.READY && bluetoothGatt?.device?.address == address) {
+            Log.d(tag, "[BLE] connect() ignored - already connected to this device")
+            return
+        }
+
+        activeAttemptId++
+        val attemptId = activeAttemptId
+        Log.d(tag, "[BLE][$attemptId] Reconnect requested for $address")
+        
         closeGatt()
+        
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = bluetoothManager.adapter ?: return
+        val adapter = bluetoothManager.adapter ?: run {
+            Log.e(tag, "[BLE][$attemptId] Bluetooth adapter unavailable")
+            _connectionState.value = ConnectionState.ERROR
+            return
+        }
+        
+        if (!adapter.isEnabled) {
+            Log.e(tag, "[BLE][$attemptId] Bluetooth adapter disabled")
+            _connectionState.value = ConnectionState.ERROR
+            return
+        }
+
         val device = adapter.getRemoteDevice(address)
+        
+        Log.d(tag, "[BLE][$attemptId] Creating new GATT connection to ${device.name ?: address}")
         _connectionState.value = ConnectionState.CONNECTING
         _connectedDeviceName.value = device.name
+        
         isConnecting = true
-        handler.postDelayed(timeoutRunnable, 15000)
+        currentTimeout = TimeoutRunnable(attemptId, this)
+        handler.postDelayed(currentTimeout!!, 15000)
+        
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
+    }
+
+    fun onConnectionTimeout(attemptId: Int) {
+        if (activeAttemptId == attemptId && isConnecting) {
+            Log.e(tag, "[BLE][$attemptId] Connection timeout reached")
+            handleError(attemptId)
+        }
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        Log.d(tag, "[BLE] Disconnect requested")
         closeGatt()
         _connectionState.value = ConnectionState.DISCONNECTED
     }
@@ -439,13 +459,9 @@ class BleConnectionManager(private val context: Context) {
         characteristic: BluetoothGattCharacteristic,
         writeType: Int
     ): Boolean {
-        val gatt = bluetoothGatt ?: run {
-            Log.e(tag, "[BLE] No GATT connection for write: $label")
-            return false
-        }
+        val gatt = bluetoothGatt ?: return false
         val data = (if (label.endsWith("\n")) label else "$label\n").toByteArray(StandardCharsets.UTF_8)
         synchronized(textWriteQueue) {
-            // Prevent exact duplicates already in queue
             if (textWriteQueue.any { it.label == label.trim() && it.characteristic == characteristic }) {
                 Log.d(tag, "[BLE] Command already in queue, skipping: $label")
                 return true
@@ -468,13 +484,15 @@ class BleConnectionManager(private val context: Context) {
 
         val started = writeCharacteristicCompat(gatt, next.characteristic, next.value, next.writeType)
         if (!started) {
-            Log.e(tag, "[BLE] Failed to start write (BUSY or error): ${next.label}")
+            Log.e(tag, "[BLE] Failed to start write (BUSY or error): ${next.label}. Retrying later.")
+            // Do NOT remove it from queue, just mark not in progress and retry
             synchronized(textWriteQueue) {
-                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeFirst()
                 textWriteInProgress = false
             }
-            // Retry later
-            handler.postDelayed({ processNextTextWrite(gatt) }, 200)
+            handler.postDelayed({
+                val currentGatt = bluetoothGatt
+                if (currentGatt != null) processNextTextWrite(currentGatt)
+            }, 200)
         } else {
             Log.d(tag, "[BLE] Command TX started: ${next.label}")
         }
@@ -484,11 +502,6 @@ class BleConnectionManager(private val context: Context) {
     suspend fun sendOtaData(data: ByteArray): Boolean {
         val char = otaDataChar ?: return false
         val gatt = bluetoothGatt ?: return false
-        
-        // Raw data might still conflict with text writes if not careful.
-        // For OTA data, we usually want high speed but we still shouldn't call 
-        // writeCharacteristic while textWriteInProgress is true.
-        // However, OTA data is usually sent in its own mode.
         return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
     }
 
@@ -513,6 +526,7 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun closeGatt() {
+        Log.d(tag, "[BLE] Closing GATT connection (Attempt ID: $activeAttemptId)")
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         bluetoothGatt = null
@@ -533,23 +547,26 @@ class BleConnectionManager(private val context: Context) {
             textWriteQueue.clear()
             textWriteInProgress = false
         }
+        handler.removeCallbacksAndMessages(null)
+        currentTimeout = null
+        isConnecting = false
     }
 
-    private fun handleDisconnect() {
-        closeGatt()
-        _connectionState.value = ConnectionState.DISCONNECTED
-        _connectedDeviceName.value = null
-        resetInputState()
-        isConnecting = false
-        handler.removeCallbacks(timeoutRunnable)
+    private fun handleDisconnect(attemptId: Int) {
+        if (activeAttemptId == attemptId) {
+            closeGatt()
+            _connectionState.value = ConnectionState.DISCONNECTED
+            _connectedDeviceName.value = null
+            resetInputState()
+        }
     }
 
-    private fun handleError() {
-        closeGatt()
-        _connectionState.value = ConnectionState.ERROR
-        resetInputState()
-        isConnecting = false
-        handler.removeCallbacks(timeoutRunnable)
+    private fun handleError(attemptId: Int) {
+        if (activeAttemptId == attemptId) {
+            closeGatt()
+            _connectionState.value = ConnectionState.ERROR
+            resetInputState()
+        }
     }
 
     private fun resetInputState() {
