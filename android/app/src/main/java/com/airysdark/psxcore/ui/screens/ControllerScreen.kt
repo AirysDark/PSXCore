@@ -1,5 +1,6 @@
 package com.airysdark.psxcore.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -7,15 +8,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.airysdark.psxcore.ble.ConnectionState
+import com.airysdark.psxcore.model.ControllerInputState
 import com.airysdark.psxcore.ui.MainViewModel
 import com.airysdark.psxcore.ui.components.Ps2ControllerVisualizer
-import com.airysdark.psxcore.model.ControllerInputState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ControllerScreen(
@@ -44,26 +46,14 @@ fun ControllerScreen(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
-
-        Ps2ControllerVisualizer(
-            inputState = inputState,
-            modifier = Modifier.fillMaxWidth()
-        )
-
+        Ps2ControllerVisualizer(inputState = inputState, modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(16.dp))
-
         DeviceInfoCard(viewModel)
-
         Spacer(modifier = Modifier.height(16.dp))
-
         ControlButtons(viewModel, connectionState)
-
         Spacer(modifier = Modifier.height(16.dp))
-
         ControllerDiagnostics(inputState, connectionState)
-        
         Spacer(modifier = Modifier.height(16.dp))
-        
         DebugLogCard(viewModel)
     }
 }
@@ -73,7 +63,6 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
     val info by viewModel.deviceInfo.collectAsState()
     val battery by viewModel.batteryLevel.collectAsState()
     val state by viewModel.bleConnectionManager.connectionState.collectAsState()
-    
     val gamepadReady by viewModel.isGamepadServiceReady.collectAsState()
     val companionReady by viewModel.isCompanionServiceReady.collectAsState()
     val otaReady by viewModel.isOtaReadyStatus.collectAsState()
@@ -88,13 +77,16 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
                 Text("Protocol: v${info.protocolVersion}", fontSize = 12.sp)
                 Text("Build: ${info.buildDate}", fontSize = 12.sp)
                 battery?.let {
-                    Text("Battery: $it%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (it < 20) Color.Red else Color.Unspecified)
+                    Text(
+                        "Battery: $it%",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (it < 20) Color.Red else Color.Unspecified
+                    )
                 }
-                
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
-                
                 ServiceStatusRow("Gamepad Service", gamepadReady)
                 ServiceStatusRow("Companion Service", companionReady)
                 ServiceStatusRow("OTA Service", otaReady)
@@ -120,38 +112,50 @@ fun ServiceStatusRow(label: String, isReady: Boolean) {
 
 @Composable
 fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
+    var controlsCoolingDown by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val controlsEnabled = state == ConnectionState.READY && !controlsCoolingDown
+
+    fun submit(label: String, action: () -> Boolean) {
+        if (!controlsEnabled) return
+        Log.d("PSXCore", "Button clicked: $label")
+        if (!action()) return
+
+        controlsCoolingDown = true
+        scope.launch {
+            delay(350)
+            controlsCoolingDown = false
+        }
+    }
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Controls", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { 
-                    Log.d("PSXCore", "Button clicked: Ping")
-                    viewModel.sendPing() 
-                }, modifier = Modifier.weight(1f), enabled = state == ConnectionState.READY) {
-                    Text("Ping")
-                }
-                Button(onClick = { 
-                    Log.d("PSXCore", "Button clicked: Refresh")
-                    viewModel.sendGetState() 
-                }, modifier = Modifier.weight(1f), enabled = state == ConnectionState.READY) {
-                    Text("Refresh")
-                }
+                Button(
+                    onClick = { submit("Ping", viewModel::sendPing) },
+                    modifier = Modifier.weight(1f),
+                    enabled = controlsEnabled
+                ) { Text("Ping") }
+                Button(
+                    onClick = { submit("Refresh", viewModel::sendGetState) },
+                    modifier = Modifier.weight(1f),
+                    enabled = controlsEnabled
+                ) { Text("Refresh") }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { 
-                    Log.d("PSXCore", "Button clicked: Info")
-                    viewModel.sendGetInfo() 
-                }, modifier = Modifier.weight(1f), enabled = state == ConnectionState.READY) {
-                    Text("Info")
-                }
-                Button(onClick = { 
-                    Log.d("PSXCore", "Button clicked: Analog")
-                    viewModel.setAnalogMode() 
-                }, modifier = Modifier.weight(1f), enabled = state == ConnectionState.READY) {
-                    Text("Analog")
-                }
+                Button(
+                    onClick = { submit("Info", viewModel::sendGetInfo) },
+                    modifier = Modifier.weight(1f),
+                    enabled = controlsEnabled
+                ) { Text("Info") }
+                Button(
+                    onClick = { submit("Analog", viewModel::setAnalogMode) },
+                    modifier = Modifier.weight(1f),
+                    enabled = controlsEnabled
+                ) { Text("Analog") }
             }
         }
     }
@@ -160,16 +164,23 @@ fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
 @Composable
 fun DebugLogCard(viewModel: MainViewModel) {
     val receivedData by viewModel.bleConnectionManager.receivedData.collectAsState()
-    
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Debug Log", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            Box(modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp)
-                .verticalScroll(rememberScrollState())) {
-                Text(receivedData, fontSize = 10.sp, color = Color.Gray, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    receivedData,
+                    fontSize = 10.sp,
+                    color = Color.Gray,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
             }
         }
     }
@@ -200,8 +211,8 @@ fun ConnectionStatusHeader(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val color = when (state) {
                         ConnectionState.READY -> Color.Green
-                        ConnectionState.CONNECTING, 
-                        ConnectionState.DISCOVERING_SERVICES, 
+                        ConnectionState.CONNECTING,
+                        ConnectionState.DISCOVERING_SERVICES,
                         ConnectionState.ENABLING_NOTIFICATIONS -> Color.Blue
                         ConnectionState.ERROR,
                         ConnectionState.COMPANION_MISSING -> Color.Red
@@ -214,7 +225,7 @@ fun ConnectionStatusHeader(
                     ) {}
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = when(state) {
+                        text = when (state) {
                             ConnectionState.READY -> "Connected"
                             ConnectionState.CONNECTING -> "Connecting..."
                             ConnectionState.DISCOVERING_SERVICES -> "Discovering..."
@@ -247,7 +258,6 @@ fun ConnectionStatusHeader(
                     }) { Text("Scan") }
                 }
             } else {
-                // Connecting/Discovering states
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
             }
         }
