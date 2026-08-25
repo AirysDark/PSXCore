@@ -1,110 +1,97 @@
-#include "psxcore_gatt.h"
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <deque>
 #include <string>
 
-namespace {
+#include "psxcore_gatt.h"
+#include "controller_state.h"
+#include "psx_analog_mode.h"
 
-constexpr const char* SERVICE_UUID = "7a4f0000-0000-4f50-5358-434f52450001";
-constexpr const char* COMMAND_UUID = "7a4f0000-0000-4f50-5358-434f52450002";
-constexpr const char* RESPONSE_UUID = "7a4f0000-0000-4f50-5358-434f52450003";
-constexpr const char* STATE_UUID = "7a4f0000-0000-4f50-5358-434f52450004";
-constexpr const char* OTA_CONTROL_UUID = "7a4f0000-0000-4f50-5358-434f52450005";
-constexpr const char* OTA_DATA_UUID = "7a4f0000-0000-4f50-5358-434f52450006";
-constexpr const char* OTA_STATUS_UUID = "7a4f0000-0000-4f50-5358-434f52450007";
+static NimBLEService* psxService = nullptr;
+static NimBLECharacteristic* commandChar = nullptr;
+static NimBLECharacteristic* responseChar = nullptr;
+static NimBLECharacteristic* stateChar = nullptr;
+static NimBLECharacteristic* otaControlChar = nullptr;
+static NimBLECharacteristic* otaDataChar = nullptr;
+static NimBLECharacteristic* otaStatusChar = nullptr;
+static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
+static bool gattReady = false;
+static bool gattInitializing = false;
 
-NimBLEServer* server = nullptr;
-NimBLEService* psxService = nullptr;
-NimBLECharacteristic* commandChar = nullptr;
-NimBLECharacteristic* responseChar = nullptr;
-NimBLECharacteristic* stateChar = nullptr;
-NimBLECharacteristic* otaControlChar = nullptr;
-NimBLECharacteristic* otaDataChar = nullptr;
-NimBLECharacteristic* otaStatusChar = nullptr;
+static std::deque<std::string> responseQueue;
+static std::deque<std::string> stateQueue;
+static std::deque<std::string> otaQueue;
+static constexpr size_t MAX_PENDING_FRAMES = 32;
 
-PsxCoreGattCallbacks registeredCallbacks{};
-bool gattReady = false;
-bool gattInitializing = false;
-
-std::deque<std::string> responseQueue;
-std::deque<std::string> stateQueue;
-std::deque<std::string> otaQueue;
-
-std::string frameText(const char* text) {
-    if (!text) return "";
-    std::string frame(text);
-    if (frame.empty() || frame.back() != '\n') frame.push_back('\n');
-    return frame;
-}
-
-void queueFrame(std::deque<std::string>& queue, const uint8_t* data, size_t length) {
-    if (!data || length == 0) return;
-    std::string frame(reinterpret_cast<const char*>(data), length);
-    if (frame.empty() || frame.back() != '\n') frame.push_back('\n');
-    queue.push_back(std::move(frame));
-}
+static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
+static const char* COMMAND_UUID     = "7a4f0000-0000-4f50-5358-434f52450002";
+static const char* RESPONSE_UUID    = "7a4f0000-0000-4f50-5358-434f52450003";
+static const char* STATE_UUID       = "7a4f0000-0000-4f50-5358-434f52450004";
+static const char* OTA_CONTROL_UUID = "7a4f0000-0000-4f50-5358-434f52450005";
+static const char* OTA_DATA_UUID    = "7a4f0000-0000-4f50-5358-434f52450006";
+static const char* OTA_STATUS_UUID  = "7a4f0000-0000-4f50-5358-434f52450007";
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
-        const std::string value = characteristic->getValue();
-        Serial.printf("[PSX-GATT] COMMAND RX: %u bytes\n", static_cast<unsigned>(value.size()));
-        if (registeredCallbacks.command && !value.empty()) {
-            registeredCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!characteristic || !rxCallbacks.command) return;
+        std::string value = characteristic->getValue();
+        if (value.empty()) return;
+        Serial.printf("[PSX-GATT] COMMAND RX: %u bytes\n", (unsigned)value.size());
+        rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
 class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
-        const std::string value = characteristic->getValue();
-        Serial.printf("[PSX-GATT] OTA_CONTROL RX: %u bytes\n", static_cast<unsigned>(value.size()));
-        if (registeredCallbacks.otaControl && !value.empty()) {
-            registeredCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!characteristic || !rxCallbacks.otaControl) return;
+        std::string value = characteristic->getValue();
+        if (value.empty()) return;
+        Serial.printf("[PSX-GATT] OTA CONTROL RX: %u bytes\n", (unsigned)value.size());
+        rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
 class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
-        const std::string value = characteristic->getValue();
-        if (registeredCallbacks.otaData && !value.empty()) {
-            registeredCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!characteristic || !rxCallbacks.otaData) return;
+        std::string value = characteristic->getValue();
+        if (value.empty()) return;
+        rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
-CommandCallbacks commandCallbacks;
-OtaControlCallbacks otaControlCallbacks;
-OtaDataCallbacks otaDataCallbacks;
+static CommandCallbacks commandCallbacks;
+static OtaControlCallbacks otaControlCallbacks;
+static OtaDataCallbacks otaDataCallbacks;
 
-bool emitNext(NimBLECharacteristic* characteristic, std::deque<std::string>& queue, const char* label) {
-    if (!characteristic || queue.empty()) return false;
-    if (characteristic->getSubscribedCount() == 0) return false;
-
-    std::string frame = std::move(queue.front());
-    queue.pop_front();
-    characteristic->setValue(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
-    characteristic->notify();
-    Serial.printf("[PSX-GATT] TX %s: %u bytes\n", label, static_cast<unsigned>(frame.size()));
-    return true;
+bool psxCoreGattRefreshAdvertising() {
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (!advertising) return false;
+    if (advertising->isAdvertising()) return true;
+    const bool started = advertising->start();
+    return started && advertising->isAdvertising();
 }
 
-} // namespace
-
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
+    rxCallbacks = callbacks;
     if (gattReady) return true;
     if (gattInitializing) return false;
 
-    gattInitializing = true;
-    registeredCallbacks = callbacks;
-
-    server = NimBLEDevice::getServer();
+    NimBLEServer* server = NimBLEDevice::getServer();
     if (!server) {
-        gattInitializing = false;
-        Serial.println("[PSX-GATT] ERROR: NimBLE server not ready yet");
+        Serial.println("[PSX-GATT] NimBLE server not ready yet");
         return false;
     }
 
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    bool wasAdvertising = advertising && advertising->isAdvertising();
+    if (wasAdvertising) {
+        Serial.println("[PSX-GATT] Stopping advertising before GATT database update");
+        advertising->stop();
+        delay(20);
+    }
+
+    gattInitializing = true;
     Serial.println("[PSX-GATT] Creating PSXCore companion service v7");
     Serial.printf("[PSX-GATT] Service UUID: %s\n", SERVICE_UUID);
     Serial.printf("[PSX-GATT] Command UUID: %s\n", COMMAND_UUID);
@@ -132,9 +119,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     commandChar->setCallbacks(&commandCallbacks);
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
-
-    // NimBLE-Arduino starts services as part of the server. Calling start() here
-    // is deprecated and has no effect, so deliberately do not call psxService->start().
+    // NimBLE-Arduino starts services with the server; start() is deprecated and has no effect.
 
     responseQueue.clear();
     stateQueue.clear();
@@ -148,59 +133,76 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     return true;
 }
 
-bool psxCoreGattIsReady() {
-    return gattReady;
+bool psxCoreGattIsReady() { return gattReady; }
+
+static void enqueueFrame(std::deque<std::string>& queue, const uint8_t* data, size_t length, bool replaceLatest) {
+    if (!gattReady || !data || !length) return;
+    std::string frame(reinterpret_cast<const char*>(data), length);
+    if (replaceLatest) {
+        if (queue.empty()) queue.push_back(std::move(frame));
+        else queue.back() = std::move(frame);
+        return;
+    }
+    if (queue.size() >= MAX_PENDING_FRAMES) {
+        Serial.println("[PSX-GATT] TX queue full; dropping oldest frame");
+        queue.pop_front();
+    }
+    queue.push_back(std::move(frame));
 }
 
-bool psxCoreGattRefreshAdvertising() {
-    if (!server || !gattReady) return false;
-    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-    if (!advertising) return false;
-    if (advertising->isAdvertising()) advertising->stop();
-    return advertising->start();
+static void enqueueTextFrame(std::deque<std::string>& queue, const char* text, bool replaceLatest) {
+    if (!text) return;
+    const size_t length = strlen(text);
+    if (!length) return;
+    std::string frame(text, length);
+    if (frame.back() != '\n') frame.push_back('\n');
+    enqueueFrame(queue, reinterpret_cast<const uint8_t*>(frame.data()), frame.size(), replaceLatest);
+}
+
+static bool sendNextFrame(NimBLECharacteristic* characteristic, std::deque<std::string>& queue, const char* label) {
+    if (!gattReady || !characteristic || queue.empty()) return false;
+    const std::string& frame = queue.front();
+    characteristic->setValue(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
+    if (!characteristic->notify()) {
+        Serial.printf("[PSX-GATT] TX %s pending: notify not accepted; keeping %u-byte frame queued\n", label, (unsigned)frame.size());
+        return false;
+    }
+    const size_t length = frame.size();
+    queue.pop_front();
+    Serial.printf("[PSX-GATT] TX %s delivered: %u bytes\n", label, (unsigned)length);
+    return true;
 }
 
 void psxCoreGattProcess() {
-    if (!gattReady) return;
-    if (emitNext(responseChar, responseQueue, "RESPONSE")) return;
-    if (emitNext(stateChar, stateQueue, "STATE")) return;
-    emitNext(otaStatusChar, otaQueue, "OTA_STATUS");
+    if (sendNextFrame(responseChar, responseQueue, "RESPONSE")) return;
+    if (sendNextFrame(stateChar, stateQueue, "STATE")) return;
+    sendNextFrame(otaStatusChar, otaQueue, "OTA_STATUS");
 }
 
-void psxCoreGattSendResponse(const uint8_t* data, size_t length) {
-    queueFrame(responseQueue, data, length);
-}
+void psxCoreGattSendResponse(const uint8_t* data, size_t length) { enqueueFrame(responseQueue, data, length, false); }
+void psxCoreGattSendResponseText(const char* text) { enqueueTextFrame(responseQueue, text, false); }
+void psxCoreGattSendState(const uint8_t* data, size_t length) { enqueueFrame(stateQueue, data, length, true); }
+void psxCoreGattSendStateText(const char* text) { enqueueTextFrame(stateQueue, text, true); }
+void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) { enqueueFrame(otaQueue, data, length, false); }
+void psxCoreGattSendOtaStatusText(const char* text) { enqueueTextFrame(otaQueue, text, false); }
 
-void psxCoreGattSendResponseText(const char* text) {
-    if (!text) return;
-    responseQueue.push_back(frameText(text));
-}
-
-void psxCoreGattSendState(const uint8_t* data, size_t length) {
-    queueFrame(stateQueue, data, length);
-}
-
-void psxCoreGattSendStateText(const char* text) {
-    if (!text) return;
-    stateQueue.push_back(frameText(text));
-}
-
-void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
-    queueFrame(otaQueue, data, length);
-}
-
-void psxCoreGattSendOtaStatusText(const char* text) {
-    if (!text) return;
-    otaQueue.push_back(frameText(text));
+void bleConfigNotifyControllerState(bool force) {
+    (void)force;
+    char message[192];
+    snprintf(message, sizeof(message),
+        "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u,\"analog\":%s}",
+        (unsigned long)controllerState.buttons,
+        (unsigned)controllerState.lx,
+        (unsigned)controllerState.ly,
+        (unsigned)controllerState.rx,
+        (unsigned)controllerState.ry,
+        psxIsAnalogMode() ? "true" : "false");
+    psxCoreGattSendStateText(message);
 }
 
 void bleConfigSendText(const char* text) {
     psxCoreGattSendResponseText(text);
-}
-
-void bleConfigNotifyControllerState(bool force) {
-    (void)force;
-    // The controller layer supplies the actual serialized state through the
-    // compatibility transport elsewhere; this symbol exists for shared-header
-    // compatibility and must not introduce a second default argument.
+    if (text && strstr(text, "\"command\":\"SET_ANALOG\"") != nullptr) {
+        bleConfigNotifyControllerState(true);
+    }
 }
