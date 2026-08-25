@@ -1,1 +1,0 @@
-{"name":"PSXBLEGamepad","version":"0.1.0","frameworks":"arduino","platforms":"espressif32","dependencies":[{"name":"NimBLE-Arduino","version":"*"},{"name":"PSXInputMapper","version":"*"}],"description":"Custom PSXCore BLE HID gamepad built on NimBLE-Arduino"}
