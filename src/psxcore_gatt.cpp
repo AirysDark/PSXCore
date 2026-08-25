@@ -50,8 +50,7 @@ static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
 
 bool psxCoreGattRefreshAdvertising() {
-    // Advertising is owned centrally by ble_nimble.cpp. This module must never
-    // stop, reset, rename, or restart the shared HID advertising instance.
+    // Advertising is owned centrally by ble_nimble.cpp.
     return true;
 }
 
@@ -67,6 +66,9 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     gattInitializing = true;
+    Serial.println("[PSX-GATT] Creating service on shared server");
+    Serial.printf("[PSX-GATT] Service UUID: %s\n", SERVICE_UUID);
+
     psxService = server->createService(SERVICE_UUID);
     if (!psxService) {
         gattInitializing = false;
@@ -98,11 +100,16 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
 
+    Serial.println("[PSX-GATT] Starting service");
+    psxService->start();
+
+    // Do not mark the companion channel ready until the service has been
+    // explicitly started in the shared GATT database.
     gattReady = true;
     gattInitializing = false;
 
+    Serial.println("[PSX-GATT] Service registered successfully");
     Serial.println("[PSX-GATT] Custom PSXCore service READY on shared NimBLE server");
-    Serial.println("[PSX-GATT] Advertising remains owned by BLE/HID manager");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
