@@ -23,6 +23,11 @@ static const char* OTA_CONTROL_UUID = "7a4f0000-0000-4f50-5358-434f52450005";
 static const char* OTA_DATA_UUID    = "7a4f0000-0000-4f50-5358-434f52450006";
 static const char* OTA_STATUS_UUID  = "7a4f0000-0000-4f50-5358-434f52450007";
 
+static bool canAdvertise() {
+    NimBLEServer* server = NimBLEDevice::getServer();
+    return server && server->getConnectedCount() == 0;
+}
+
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.command) return;
@@ -57,7 +62,16 @@ static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
 
 bool psxCoreGattRefreshAdvertising() {
-    return true;
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (!advertising) return false;
+
+    // PSXCore is a single shared BLE device: HID and custom GATT use the
+    // same connection. Never restart advertising while a client is connected.
+    if (!canAdvertise()) return false;
+    if (advertising->isAdvertising()) return true;
+
+    const bool started = advertising->start();
+    return started && advertising->isAdvertising();
 }
 
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
@@ -72,6 +86,12 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (advertising) {
+        // Priority 3: one physical BLE client connection only. HID and the
+        // PSXCore companion service are both exposed through that connection.
+        advertising->setMaxConnections(1);
+    }
+
     bool wasAdvertising = advertising && advertising->isAdvertising();
     if (wasAdvertising) {
         Serial.println("[PSX-GATT] Stopping advertising before GATT database update");
@@ -126,6 +146,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
+    Serial.println("[BLE] Connection policy: ONE shared BLE client connection");
     return true;
 }
 
