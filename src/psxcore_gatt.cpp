@@ -131,6 +131,10 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
 bool psxCoreGattIsReady() { return gattReady; }
 
+// Direct notifications are emitted immediately. This remains as a compatibility
+// no-op so the existing BLE loop does not need the old queue/chunk transport.
+void psxCoreGattProcess() {}
+
 static void sendCharacteristic(
     NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
