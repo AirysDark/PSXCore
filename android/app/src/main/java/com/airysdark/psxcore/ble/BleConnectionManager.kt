@@ -21,12 +21,12 @@ import com.airysdark.psxcore.protocol.PsxCoreMessageParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -68,15 +68,22 @@ class BleConnectionManager(private val context: Context) {
     private val _otaResult = MutableSharedFlow<Result<Unit>>(extraBufferCapacity = 1)
     val otaResult = _otaResult.asSharedFlow()
 
-    private var txCharacteristic: BluetoothGattCharacteristic? = null
-    private var rxCharacteristic: BluetoothGattCharacteristic? = null
-    private var batteryCharacteristic: BluetoothGattCharacteristic? = null
+    // 6 PSXCore Characteristics
+    private var commandChar: BluetoothGattCharacteristic? = null
+    private var responseChar: BluetoothGattCharacteristic? = null
+    private var stateChar: BluetoothGattCharacteristic? = null
+    private var otaControlChar: BluetoothGattCharacteristic? = null
+    private var otaDataChar: BluetoothGattCharacteristic? = null
+    private var otaStatusChar: BluetoothGattCharacteristic? = null
 
     private var pendingWrite: CompletableDeferred<Int>? = null
 
     private val parser = PsxCoreMessageParser()
-    private val messageBuffer = StringBuilder()
-    private var lastDataHash: Int = 0 // To prevent double-processing of the same notification
+
+    // Separate buffers for each NOTIFY stream
+    private val responseBuffer = StringBuilder()
+    private val stateBuffer = StringBuilder()
+    private val otaStatusBuffer = StringBuilder()
 
     private var isConnecting = false
     private val handler = Handler(Looper.getMainLooper())
@@ -86,6 +93,8 @@ class BleConnectionManager(private val context: Context) {
             handleError()
         }
     }
+
+    private val descriptorQueue = mutableListOf<BluetoothGattDescriptor>()
 
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
@@ -127,7 +136,6 @@ class BleConnectionManager(private val context: Context) {
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            // Only process if we're on a version that doesn't call the new overload
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 handleIncomingData(characteristic.value ?: return, characteristic.uuid)
             }
@@ -141,19 +149,11 @@ class BleConnectionManager(private val context: Context) {
             handleIncomingData(value, characteristic.uuid)
         }
 
+        @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (descriptor.uuid == ProtocolConstants.CCCD_UUID) {
-                    Log.d(tag, "[BLE] Notifications enabled, Controller READY")
-                    _connectionState.value = ConnectionState.READY
-                    isConnecting = false
-                    handler.removeCallbacks(timeoutRunnable)
-                    
-                    // Request initial state after READY
-                    sendCommand(ProtocolConstants.CMD_GET_STATE)
-                    sendCommand(ProtocolConstants.CMD_INFO)
-                    sendCommand(ProtocolConstants.CMD_GET_SETTINGS)
-                }
+                Log.d(tag, "[BLE] Descriptor write success: ${descriptor.characteristic.uuid}")
+                processNextDescriptor(gatt)
             } else {
                 Log.e(tag, "[BLE] Descriptor write failed: $status")
                 handleError()
@@ -162,7 +162,7 @@ class BleConnectionManager(private val context: Context) {
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d(tag, "[BLE] Write successful")
+                Log.d(tag, "[BLE] Write successful to ${characteristic.uuid}")
                 pendingWrite?.complete(status)
             } else {
                 Log.e(tag, "[BLE] Write failed: $status")
@@ -171,119 +171,108 @@ class BleConnectionManager(private val context: Context) {
         }
     }
 
-    private fun handleIncomingData(data: ByteArray, uuid: java.util.UUID) {
-        if (data.isEmpty()) return
-
-        when (uuid) {
-            ProtocolConstants.PSX_TX_UUID -> {
-                val chunk = String(data, StandardCharsets.UTF_8)
+    @SuppressLint("MissingPermission")
+    private fun processNextDescriptor(gatt: BluetoothGatt) {
+        synchronized(descriptorQueue) {
+            if (descriptorQueue.isNotEmpty()) {
+                val descriptor = descriptorQueue.removeAt(0)
+                writeDescriptorCompat(gatt, descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            } else {
+                Log.d(tag, "[BLE] All notifications enabled, Controller READY")
+                _connectionState.value = ConnectionState.READY
+                isConnecting = false
+                handler.removeCallbacks(timeoutRunnable)
                 
-                synchronized(messageBuffer) {
-                    messageBuffer.append(chunk)
-                    
-                    var newlineIndex: Int
-                    while (messageBuffer.indexOf("\n").also { newlineIndex = it } >= 0) {
-                        val message = messageBuffer.substring(0, newlineIndex).trim()
-                        messageBuffer.delete(0, newlineIndex + 1)
-                        
-                        if (message.isNotEmpty()) {
-                            Log.d(tag, "[BLE] Complete message received: $message")
-                            processIncomingMessage(message)
-                        }
-                    }
-                }
-            }
-            ProtocolConstants.BATTERY_LEVEL_UUID -> {
-                val level = data[0].toInt()
-                Log.d(tag, "[BLE] Battery Level: $level%")
-                _batteryLevel.value = level
+                // Request initial state after READY
+                sendCommand(ProtocolConstants.CMD_GET_STATE)
+                sendCommand(ProtocolConstants.CMD_INFO)
             }
         }
     }
 
-    private fun processIncomingMessage(message: String) {
-        // Update debug log with the latest message
-        val currentLog = _receivedData.value
-        val newLog = if (currentLog.length > 2000) {
-            message + "\n" + currentLog.substring(0, 1500)
-        } else {
-            message + "\n" + currentLog
-        }
-        _receivedData.value = newLog
-        
-        if (message.startsWith("{")) {
-            // Attempt to parse as different message types
-            parser.parseState(message, _inputState.value.packetCount + 1)?.let {
-                _inputState.value = it
-                return
-            }
-            parser.parseDeviceInfo(message)?.let {
-                Log.d(tag, "[BLE] Parsed Device Info: v${it.firmwareVersion}")
-                _deviceInfo.value = it
-                return
-            }
-            parser.parseDeviceSettings(message)?.let {
-                Log.d(tag, "[BLE] Parsed Device Settings")
-                _deviceSettings.value = it
-                return
-            }
+    private fun handleIncomingData(data: ByteArray, uuid: UUID) {
+        if (data.isEmpty()) return
 
-            // OTA Messages
-            parser.parseOtaReady(message)?.let {
-                Log.d(tag, "[BLE] OTA Ready: chunk_size=$it")
-                _otaReady.tryEmit(it)
-                return
+        when (uuid) {
+            ProtocolConstants.PSX_RESPONSE_UUID -> {
+                processStream(data, responseBuffer) { message ->
+                    Log.d(tag, "[BLE-RES] Incoming: $message")
+                    _receivedData.value = message
+                    if (message.startsWith("{")) {
+                        parser.parseDeviceInfo(message)?.let { _deviceInfo.value = it }
+                        parser.parseDeviceSettings(message)?.let { _deviceSettings.value = it }
+                    } else if (message == "PONG") {
+                        Log.d(tag, "[BLE] Received PONG")
+                    }
+                }
             }
-            if (parser.parseOtaSuccess(message)) {
-                Log.d(tag, "[BLE] OTA Success received")
-                _otaResult.tryEmit(Result.success(Unit))
-                return
+            ProtocolConstants.PSX_STATE_UUID -> {
+                processStream(data, stateBuffer) { message ->
+                    if (message.startsWith("{")) {
+                        parser.parseState(message, _inputState.value.packetCount + 1)?.let {
+                            _inputState.value = it
+                        }
+                    }
+                }
             }
-            parser.parseOtaError(message)?.let {
-                Log.e(tag, "[BLE] OTA Error received: $it")
-                _otaResult.tryEmit(Result.failure(Exception(it)))
-                return
+            ProtocolConstants.PSX_OTA_STATUS_UUID -> {
+                processStream(data, otaStatusBuffer) { message ->
+                    Log.d(tag, "[BLE-OTA] Status: $message")
+                    if (message.startsWith("{")) {
+                        parser.parseOtaReady(message)?.let { _otaReady.tryEmit(it) }
+                        if (parser.parseOtaSuccess(message)) _otaResult.tryEmit(Result.success(Unit))
+                        parser.parseOtaError(message)?.let { _otaResult.tryEmit(Result.failure(Exception(it))) }
+                    } else if (message.startsWith("OTA_PROGRESS:")) {
+                        // Handle raw text progress if needed
+                    } else if (message == "OTA_READY") {
+                        _otaReady.tryEmit(180) // Default chunk size if not in JSON
+                    } else if (message == "OTA_SUCCESS") {
+                        _otaResult.tryEmit(Result.success(Unit))
+                    }
+                }
             }
-        } else if (message == "PONG") {
-            Log.d(tag, "[BLE] Received PONG")
+        }
+    }
+
+    private fun processStream(data: ByteArray, buffer: StringBuilder, onMessage: (String) -> Unit) {
+        val chunk = String(data, StandardCharsets.UTF_8)
+        synchronized(buffer) {
+            buffer.append(chunk)
+            var newlineIndex: Int
+            while (buffer.indexOf("\n").also { newlineIndex = it } >= 0) {
+                val message = buffer.substring(0, newlineIndex).trim()
+                buffer.delete(0, newlineIndex + 1)
+                if (message.isNotEmpty()) {
+                    onMessage(message)
+                }
+            }
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
-        val service = gatt.getService(ProtocolConstants.PSX_SERVICE_UUID)
+        val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
         if (service != null) {
             Log.d(tag, "[BLE] PSXCore service found")
-            txCharacteristic = service.getCharacteristic(ProtocolConstants.PSX_TX_UUID)
-            rxCharacteristic = service.getCharacteristic(ProtocolConstants.PSX_RX_UUID)
+            commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
+            responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
+            stateChar = service.getCharacteristic(ProtocolConstants.PSX_STATE_UUID)
+            otaControlChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_CONTROL_UUID)
+            otaDataChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_DATA_UUID)
+            otaStatusChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_STATUS_UUID)
 
-            if (txCharacteristic != null) {
-                gatt.setCharacteristicNotification(txCharacteristic!!, true)
-                val descriptor = txCharacteristic!!.getDescriptor(ProtocolConstants.CCCD_UUID)
-                if (descriptor != null) {
-                    writeDescriptorCompat(gatt, descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                } else {
-                    Log.e(tag, "[BLE] CCCD descriptor not found")
-                    handleError()
+            // Queue up notifications
+            synchronized(descriptorQueue) {
+                descriptorQueue.clear()
+                listOf(responseChar, stateChar, otaStatusChar).filterNotNull().forEach { char ->
+                    gatt.setCharacteristicNotification(char, true)
+                    char.getDescriptor(ProtocolConstants.CCCD_UUID)?.let { descriptorQueue.add(it) }
                 }
-            } else {
-                Log.e(tag, "[BLE] TX characteristic not found")
-                handleError()
             }
-            Log.d(tag, "[BLE] NUS Characteristics found and configured")
+            processNextDescriptor(gatt)
         } else {
-            Log.w(tag, "[BLE] PSXCore custom service not found")
+            Log.w(tag, "[BLE] PSXCore service not found")
             handleError()
-        }
-
-        // Setup Battery Service if available
-        val batteryService = gatt.getService(ProtocolConstants.BATTERY_SERVICE_UUID)
-        if (batteryService != null) {
-            Log.d(tag, "[BLE] Battery service found")
-            batteryCharacteristic = batteryService.getCharacteristic(ProtocolConstants.BATTERY_LEVEL_UUID)
-            if (batteryCharacteristic != null) {
-                gatt.setCharacteristicNotification(batteryCharacteristic!!, true)
-            }
         }
     }
 
@@ -306,92 +295,65 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun connect(address: String) {
-        if (isConnecting) {
-            Log.w(tag, "[BLE] Connection already in progress")
-            return
-        }
-
-        Log.d(tag, "[BLE] Reconnect requested for $address")
+        if (isConnecting) return
         closeGatt()
-
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = bluetoothManager.adapter
-        if (adapter == null || !adapter.isEnabled) {
-            Log.e(tag, "[BLE] Bluetooth is disabled")
-            _connectionState.value = ConnectionState.ERROR
-            return
-        }
-
+        val adapter = bluetoothManager.adapter ?: return
         val device = adapter.getRemoteDevice(address)
-        
-        Log.d(tag, "[BLE] Creating new GATT connection to ${device.name ?: address}")
         _connectionState.value = ConnectionState.CONNECTING
         _connectedDeviceName.value = device.name
-        
         isConnecting = true
         handler.postDelayed(timeoutRunnable, 15000)
-        
         bluetoothGatt = device.connectGatt(context, false, gattCallback)
     }
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
-        Log.d(tag, "[BLE] Disconnect requested")
         closeGatt()
         _connectionState.value = ConnectionState.DISCONNECTED
     }
 
     @SuppressLint("MissingPermission")
     fun sendCommand(command: String): Boolean {
-        val rx = rxCharacteristic ?: return false
+        val char = commandChar ?: return false
         val gatt = bluetoothGatt ?: return false
-        val data = command.toByteArray(StandardCharsets.UTF_8)
-        
-        return writeCharacteristicCompat(gatt, rx, data)
+        val data = (if (command.endsWith("\n")) command else "$command\n").toByteArray(StandardCharsets.UTF_8)
+        return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
     }
 
     @SuppressLint("MissingPermission")
-    suspend fun sendBinaryChunk(data: ByteArray): Boolean {
-        val rx = rxCharacteristic ?: return false
+    fun sendOtaControl(command: String): Boolean {
+        val char = otaControlChar ?: return false
+        val gatt = bluetoothGatt ?: return false
+        val data = (if (command.endsWith("\n")) command else "$command\n").toByteArray(StandardCharsets.UTF_8)
+        return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+    }
+
+    @SuppressLint("MissingPermission")
+    suspend fun sendOtaData(data: ByteArray): Boolean {
+        val char = otaDataChar ?: return false
         val gatt = bluetoothGatt ?: return false
         
-        pendingWrite = CompletableDeferred()
-        val success = writeCharacteristicCompat(gatt, rx, data)
-        
-        if (!success) {
-            pendingWrite = null
-            return false
-        }
-        
-        return try {
-            withTimeoutOrNull(5000) {
-                pendingWrite?.await()
-                true
-            } ?: false
-        } catch (e: Exception) {
-            false
-        } finally {
-            pendingWrite = null
-        }
+        // Use NO_RESPONSE for faster transfer as requested.
+        // For raw binary we don't necessarily need to wait for write completion if the stack handles it.
+        // But for flow control, we could wait if needed.
+        return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
     }
 
     @SuppressLint("MissingPermission")
     private fun writeCharacteristicCompat(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
-        value: ByteArray
+        value: ByteArray,
+        writeType: Int
     ): Boolean {
+        characteristic.writeType = writeType
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(
-                characteristic,
-                value,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            ) == BluetoothStatusCodes.SUCCESS
+            gatt.writeCharacteristic(characteristic, value, writeType) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             run {
                 characteristic.value = value
-                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 gatt.writeCharacteristic(characteristic)
             }
         }
@@ -399,16 +361,19 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun closeGatt() {
-        Log.d(tag, "[BLE] Closing previous GATT")
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         bluetoothGatt = null
-        txCharacteristic = null
-        rxCharacteristic = null
-        batteryCharacteristic = null
-        synchronized(messageBuffer) {
-            messageBuffer.setLength(0)
-        }
+        commandChar = null
+        responseChar = null
+        stateChar = null
+        otaControlChar = null
+        otaDataChar = null
+        otaStatusChar = null
+        synchronized(responseBuffer) { responseBuffer.setLength(0) }
+        synchronized(stateBuffer) { stateBuffer.setLength(0) }
+        synchronized(otaStatusBuffer) { otaStatusBuffer.setLength(0) }
+        synchronized(descriptorQueue) { descriptorQueue.clear() }
     }
 
     private fun handleDisconnect() {
@@ -433,8 +398,5 @@ class BleConnectionManager(private val context: Context) {
         _deviceInfo.value = DeviceInfo()
         _deviceSettings.value = DeviceSettings()
         _batteryLevel.value = null
-        synchronized(messageBuffer) {
-            messageBuffer.setLength(0)
-        }
     }
 }

@@ -66,24 +66,24 @@ class UpdateManager(
         _updateState.value = UpdateState.PREPARING
         
         try {
-            // 1. Send OTA_BEGIN
+            // 1. Send OTA_BEGIN to OTA_CONTROL
             val beginMsg = JSONObject().apply {
                 put("type", "ota_begin")
                 put("size", size)
-            }.toString() + "\n"
+            }.toString()
             
-            if (!bleManager.sendCommand(beginMsg)) {
+            if (!bleManager.sendOtaControl(beginMsg)) {
                 throw Exception("Failed to send OTA_BEGIN")
             }
 
-            // 2. Wait for OTA_READY
+            // 2. Wait for OTA_READY from OTA_STATUS
             val chunkSize = withTimeoutOrNull(5000) {
                 bleManager.otaReady.first()
             } ?: throw Exception("Timeout waiting for OTA_READY")
 
             _updateState.value = UpdateState.TRANSFERRING
             
-            // 3. Send binary chunks
+            // 3. Send binary chunks to OTA_DATA
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
                 val buffer = ByteArray(chunkSize)
                 var bytesSent = 0L
@@ -91,25 +91,28 @@ class UpdateManager(
                 
                 while (withContext(Dispatchers.IO) { inputStream.read(buffer) }.also { read = it } != -1) {
                     val chunk = if (read == chunkSize) buffer else buffer.copyOf(read)
-                    if (!bleManager.sendBinaryChunk(chunk)) {
+                    if (!bleManager.sendOtaData(chunk)) {
                         throw Exception("Failed to send chunk at $bytesSent")
                     }
                     bytesSent += read
                     _progress.value = bytesSent.toFloat() / size
+                    
+                    // Small delay to prevent saturating the BLE stack if NO_RESPONSE is used
+                    kotlinx.coroutines.delay(10)
                 }
             } ?: throw Exception("Failed to open firmware file")
 
-            // 4. Send OTA_END
+            // 4. Send OTA_END to OTA_CONTROL
             _updateState.value = UpdateState.VERIFYING
             val endMsg = JSONObject().apply {
                 put("type", "ota_end")
-            }.toString() + "\n"
+            }.toString()
             
-            if (!bleManager.sendCommand(endMsg)) {
+            if (!bleManager.sendOtaControl(endMsg)) {
                 throw Exception("Failed to send OTA_END")
             }
 
-            // 5. Wait for Result
+            // 5. Wait for Result (OTA_SUCCESS) from OTA_STATUS
             val result = withTimeoutOrNull(30000) {
                 bleManager.otaResult.first()
             } ?: throw Exception("Timeout waiting for OTA result")

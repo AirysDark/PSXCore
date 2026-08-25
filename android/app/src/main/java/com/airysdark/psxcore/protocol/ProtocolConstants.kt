@@ -4,39 +4,42 @@ import java.util.UUID
 
 object ProtocolConstants {
     /**
-     * PSXCore BLE GATT Contract
+     * PSXCore Custom GATT BLE Service Contract
      */
     
-    // Custom PSXCore / Nordic UART Service
-    val PSX_SERVICE_UUID: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
+    // Service UUID
+    val PSXCORE_SERVICE_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0000")
     
-    // RX Characteristic - Android -> PSXCore (WRITE)
-    val PSX_RX_UUID: UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
+    // 1. COMMAND - Android -> ESP32 (WRITE, WRITE_NO_RESPONSE)
+    val PSX_COMMAND_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0001")
     
-    // TX Characteristic - PSXCore -> Android (NOTIFY)
-    val PSX_TX_UUID: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")
+    // 2. RESPONSE - ESP32 -> Android (NOTIFY)
+    val PSX_RESPONSE_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0002")
     
-    // Battery Service
-    val BATTERY_SERVICE_UUID: UUID = UUID.fromString("0000180f-0000-1000-8000-00805f9b34fb")
-    val BATTERY_LEVEL_UUID: UUID = UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb")
+    // 3. STATE - ESP32 -> Android (NOTIFY)
+    val PSX_STATE_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0003")
     
-    // Device Information Service
-    val DEVICE_INFO_SERVICE_UUID: UUID = UUID.fromString("0000180a-0000-1000-8000-00805f9b34fb")
-    val FIRMWARE_REVISION_UUID: UUID = UUID.fromString("00002a26-0000-1000-8000-00805f9b34fb")
-    val HARDWARE_REVISION_UUID: UUID = UUID.fromString("00002a27-0000-1000-8000-00805f9b34fb")
-    val MANUFACTURER_NAME_UUID: UUID = UUID.fromString("00002a29-0000-1000-8000-00805f9b34fb")
+    // 4. OTA CONTROL - Android -> ESP32 (WRITE, WRITE_NO_RESPONSE)
+    val PSX_OTA_CONTROL_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0004")
     
-    // HID Service
-    val HID_SERVICE_UUID: UUID = UUID.fromString("00001812-0000-1000-8000-00805f9b34fb")
+    // 5. OTA DATA - Android -> ESP32 (WRITE_NO_RESPONSE)
+    val PSX_OTA_DATA_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0005")
     
+    // 6. OTA STATUS - ESP32 -> Android (NOTIFY)
+    val PSX_OTA_STATUS_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0006")
+
     // Standard Bluetooth Descriptor for Notifications
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     
     // Commands
-    const val CMD_PING = "PING\n"
-    const val CMD_INFO = "INFO\n"
-    const val CMD_GET_STATE = "GET_STATE\n"
-    const val CMD_GET_SETTINGS = "GET_SETTINGS\n"
-    const val CMD_SET_ANALOG = "SET_ANALOG\n"
-    const val CMD_OTA_INFO = "OTA_INFO\n"
+    const val CMD_PING = "PING"
+    const val CMD_INFO = "INFO"
+    const val CMD_GET_STATE = "GET_STATE"
+    const val CMD_GET_SETTINGS = "GET_SETTINGS"
+    const val CMD_SET_ANALOG = "SET_ANALOG"
+    const val CMD_OTA_BEGIN = "OTA_BEGIN"
+    const val CMD_OTA_END = "OTA_END"
+    const val CMD_OTA_RESET = "OTA_RESET"
+    const val CMD_OTA_CANCEL = "OTA_CANCEL"
+    const val CMD_OTA_INFO = "OTA_INFO"
 }
