@@ -13,7 +13,6 @@ static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
 static bool gattInitializing = false;
 
-static const char* DEVICE_NAME      = "PSXCore";
 static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
 static const char* COMMAND_UUID     = "7a4f0001-0000-4f50-5358-434f52450001";
 static const char* RESPONSE_UUID    = "7a4f0002-0000-4f50-5358-434f52450001";
@@ -29,6 +28,7 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
+
 class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaControl) return;
@@ -36,6 +36,7 @@ class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
+
 class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaData) return;
@@ -43,37 +44,15 @@ class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
+
 static CommandCallbacks commandCallbacks;
 static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
 
 bool psxCoreGattRefreshAdvertising() {
-    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-    if (!advertising) {
-        Serial.println("[BLE] Advertising ERROR: object unavailable");
-        return false;
-    }
-
-    NimBLEDevice::setDeviceName(DEVICE_NAME);
-    if (advertising->isAdvertising()) advertising->stop();
-    delay(100);
-
-    advertising->reset();
-    advertising->setName(DEVICE_NAME);
-    advertising->setAppearance(0x03C4);
-    advertising->addServiceUUID(SERVICE_UUID);
-    advertising->setScanResponse(true);
-
-    bool started = advertising->start();
-    delay(100);
-    bool advertisingNow = advertising->isAdvertising();
-    Serial.printf("[BLE] Advertising start: %s\n", (started && advertisingNow) ? "OK" : "FAILED");
-    if (advertisingNow) {
-        Serial.printf("[BLE] DISCOVERABLE NAME: %s\n", DEVICE_NAME);
-        Serial.println("[BLE] Android scan should show: PSXCore");
-        Serial.println("[BLE] Advertised service: PSXCore custom GATT");
-    }
-    return advertisingNow;
+    // Advertising is owned centrally by ble_nimble.cpp. This module must never
+    // stop, reset, rename, or restart the shared HID advertising instance.
+    return true;
 }
 
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
@@ -95,14 +74,21 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
         return false;
     }
 
-    commandChar = psxService->createCharacteristic(COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    responseChar = psxService->createCharacteristic(RESPONSE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    stateChar = psxService->createCharacteristic(STATE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    otaControlChar = psxService->createCharacteristic(OTA_CONTROL_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    otaDataChar = psxService->createCharacteristic(OTA_DATA_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    otaStatusChar = psxService->createCharacteristic(OTA_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    commandChar = psxService->createCharacteristic(
+        COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    responseChar = psxService->createCharacteristic(
+        RESPONSE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    stateChar = psxService->createCharacteristic(
+        STATE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    otaControlChar = psxService->createCharacteristic(
+        OTA_CONTROL_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    otaDataChar = psxService->createCharacteristic(
+        OTA_DATA_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    otaStatusChar = psxService->createCharacteristic(
+        OTA_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
-    if (!commandChar || !responseChar || !stateChar || !otaControlChar || !otaDataChar || !otaStatusChar) {
+    if (!commandChar || !responseChar || !stateChar || !otaControlChar ||
+        !otaDataChar || !otaStatusChar) {
         gattInitializing = false;
         Serial.println("[PSX-GATT] ERROR: characteristic creation failed");
         return false;
@@ -114,23 +100,48 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     gattReady = true;
     gattInitializing = false;
-    Serial.println("[PSX-GATT] Custom PSXCore service READY");
+
+    Serial.println("[PSX-GATT] Custom PSXCore service READY on shared NimBLE server");
+    Serial.println("[PSX-GATT] Advertising remains owned by BLE/HID manager");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
-    return psxCoreGattRefreshAdvertising();
+    return true;
 }
 
 bool psxCoreGattIsReady() { return gattReady; }
-static void sendCharacteristic(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
+
+static void sendCharacteristic(
+    NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
     characteristic->setValue(data, length);
     characteristic->notify();
 }
-void psxCoreGattSendResponse(const uint8_t* data, size_t length) { sendCharacteristic(responseChar, data, length); }
-void psxCoreGattSendResponseText(const char* text) { if (text) psxCoreGattSendResponse(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
-void psxCoreGattSendState(const uint8_t* data, size_t length) { sendCharacteristic(stateChar, data, length); }
-void psxCoreGattSendStateText(const char* text) { if (text) psxCoreGattSendState(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
-void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) { sendCharacteristic(otaStatusChar, data, length); }
-void psxCoreGattSendOtaStatusText(const char* text) { if (text) psxCoreGattSendOtaStatus(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
+
+void psxCoreGattSendResponse(const uint8_t* data, size_t length) {
+    sendCharacteristic(responseChar, data, length);
+}
+
+void psxCoreGattSendResponseText(const char* text) {
+    if (text) psxCoreGattSendResponse(
+        reinterpret_cast<const uint8_t*>(text), strlen(text));
+}
+
+void psxCoreGattSendState(const uint8_t* data, size_t length) {
+    sendCharacteristic(stateChar, data, length);
+}
+
+void psxCoreGattSendStateText(const char* text) {
+    if (text) psxCoreGattSendState(
+        reinterpret_cast<const uint8_t*>(text), strlen(text));
+}
+
+void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
+    sendCharacteristic(otaStatusChar, data, length);
+}
+
+void psxCoreGattSendOtaStatusText(const char* text) {
+    if (text) psxCoreGattSendOtaStatus(
+        reinterpret_cast<const uint8_t*>(text), strlen(text));
+}
