@@ -137,9 +137,10 @@ void setup() {
     Serial.println("[BOOT] ANALOG button       WAITING FOR CONTROLLER");
   }
 
-  Serial.println("[BOOT] Starting Bluetooth HID...");
+  Serial.println("[BOOT] Starting Bluetooth HID + Android companion...");
   bleGamepadBegin();
   bootMark("Bluetooth HID", true);
+  Serial.printf("[BOOT] Android companion   %s\n", bleConfigIsReady() ? "READY" : "FAILED");
   Serial.println("[BOOT] BLE advertising      ON");
 
   ControllerState idleState{};
@@ -170,11 +171,10 @@ void loop() {
 
   if (!powerManagerIsSleeping()) {
     bleGamepadUpdate();
+    bleConfigNotifyControllerState();
     debugStatusLoop();
     delay(5);
   } else {
-    // Keep a slow PSX poll running so any button/stick movement or ANALOG mode
-    // transition can wake the controller without requiring a power cycle.
     delay(100);
   }
 }
