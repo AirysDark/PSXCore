@@ -85,6 +85,7 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
             if (state == ConnectionState.READY) {
                 Text("Version: ${info.firmwareVersion}", fontSize = 12.sp)
                 Text("Hardware: ${info.hardwareRevision}", fontSize = 12.sp)
+                Text("Protocol: v${info.protocolVersion}", fontSize = 12.sp)
                 Text("Build: ${info.buildDate}", fontSize = 12.sp)
                 battery?.let {
                     Text("Battery: $it%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (it < 20) Color.Red else Color.Unspecified)

@@ -64,6 +64,7 @@ class PsxCoreMessageParser {
                     hardwareRevision = json.optString("hardware", "Unknown"),
                     deviceName = json.optString("device", json.optString("name", "PSXCore")),
                     buildDate = json.optString("build", "Unknown"),
+                    protocolVersion = json.optInt("protocol", 0),
                     otaSupport = json.optBoolean("ota", false)
                 )
             } else null

@@ -80,7 +80,7 @@ class BleConnectionManager(private val context: Context) {
     // 6 PSXCore Characteristics
     private var commandChar: BluetoothGattCharacteristic? = null
     private var responseChar: BluetoothGattCharacteristic? = null
-    private var stateChar: BluetoothGattCharacteristic? = null
+    private var controllerStateChar: BluetoothGattCharacteristic? = null
     private var otaControlChar: BluetoothGattCharacteristic? = null
     private var otaDataChar: BluetoothGattCharacteristic? = null
     private var otaStatusChar: BluetoothGattCharacteristic? = null
@@ -218,7 +218,7 @@ class BleConnectionManager(private val context: Context) {
                     }
                 }
             }
-            ProtocolConstants.PSX_STATE_UUID -> {
+            ProtocolConstants.PSX_CONTROLLER_STATE_UUID -> {
                 processStream(data, stateBuffer) { message ->
                     if (message.startsWith("{")) {
                         parser.parseState(message, _inputState.value.packetCount + 1)?.let {
@@ -249,6 +249,12 @@ class BleConnectionManager(private val context: Context) {
     private fun processStream(data: ByteArray, buffer: StringBuilder, onMessage: (String) -> Unit) {
         val chunk = String(data, StandardCharsets.UTF_8)
         synchronized(buffer) {
+            // Safety: if buffer gets too large without a newline, clear it
+            if (buffer.length > 4096) {
+                Log.w(tag, "[BLE] Buffer overflow, clearing stale data")
+                buffer.setLength(0)
+            }
+
             buffer.append(chunk)
             var newlineIndex: Int
             while (buffer.indexOf("\n").also { newlineIndex = it } >= 0) {
@@ -278,7 +284,7 @@ class BleConnectionManager(private val context: Context) {
             Log.d(tag, "[BLE] PSXCore custom service found")
             commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
             responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
-            stateChar = service.getCharacteristic(ProtocolConstants.PSX_STATE_UUID)
+            controllerStateChar = service.getCharacteristic(ProtocolConstants.PSX_CONTROLLER_STATE_UUID)
             otaControlChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_CONTROL_UUID)
             otaDataChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_DATA_UUID)
             otaStatusChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_STATUS_UUID)
@@ -286,7 +292,7 @@ class BleConnectionManager(private val context: Context) {
             // Queue up notifications
             synchronized(descriptorQueue) {
                 descriptorQueue.clear()
-                listOf(responseChar, stateChar, otaStatusChar).filterNotNull().forEach { char ->
+                listOf(responseChar, controllerStateChar, otaStatusChar).filterNotNull().forEach { char ->
                     gatt.setCharacteristicNotification(char, true)
                     char.getDescriptor(ProtocolConstants.CCCD_UUID)?.let { descriptorQueue.add(it) }
                 }
@@ -384,7 +390,7 @@ class BleConnectionManager(private val context: Context) {
         bluetoothGatt = null
         commandChar = null
         responseChar = null
-        stateChar = null
+        controllerStateChar = null
         otaControlChar = null
         otaDataChar = null
         otaStatusChar = null

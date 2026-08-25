@@ -19,7 +19,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveLastDevice(address: String, name: String?) {
         context.dataStore.edit { settings ->
             settings[LAST_DEVICE_ADDRESS] = address
-            settings[LAST_DEVICE_NAME] = name ?: "Unknown PSXCore"
+            settings[LAST_DEVICE_NAME] = name ?: "PSXCore"
         }
     }
 
