@@ -13,19 +13,23 @@ static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
 static bool gattInitializing = false;
 
+// PSXCore Companion GATT v7 contract.
+// These UUIDs MUST stay identical to android/.../ProtocolConstants.kt.
 static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
-static const char* COMMAND_UUID     = "7a4f0001-0000-4f50-5358-434f52450001";
-static const char* RESPONSE_UUID    = "7a4f0002-0000-4f50-5358-434f52450001";
-static const char* STATE_UUID       = "7a4f0003-0000-4f50-5358-434f52450001";
-static const char* OTA_CONTROL_UUID = "7a4f0004-0000-4f50-5358-434f52450001";
-static const char* OTA_DATA_UUID    = "7a4f0005-0000-4f50-5358-434f52450001";
-static const char* OTA_STATUS_UUID  = "7a4f0006-0000-4f50-5358-434f52450001";
+static const char* COMMAND_UUID     = "7a4f0000-0000-4f50-5358-434f52450002";
+static const char* RESPONSE_UUID    = "7a4f0000-0000-4f50-5358-434f52450003";
+static const char* STATE_UUID       = "7a4f0000-0000-4f50-5358-434f52450004";
+static const char* OTA_CONTROL_UUID = "7a4f0000-0000-4f50-5358-434f52450005";
+static const char* OTA_DATA_UUID    = "7a4f0000-0000-4f50-5358-434f52450006";
+static const char* OTA_STATUS_UUID  = "7a4f0000-0000-4f50-5358-434f52450007";
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.command) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+        if (value.empty()) return;
+        Serial.printf("[PSX-GATT] COMMAND RX: %u bytes\n", (unsigned)value.size());
+        rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -33,7 +37,9 @@ class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaControl) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+        if (value.empty()) return;
+        Serial.printf("[PSX-GATT] OTA CONTROL RX: %u bytes\n", (unsigned)value.size());
+        rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -41,7 +47,8 @@ class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaData) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
+        if (value.empty()) return;
+        rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -64,13 +71,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
         return false;
     }
 
-    /*
-     * Critical ordering rule:
-     * Do not modify the shared GATT database while the device is advertising.
-     * Some Android stacks can cache the database that existed when the first
-     * connection was made. Stop advertising, build and start the complete
-     * PSXCore service, then let ble_nimble.cpp restart shared advertising.
-     */
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     bool wasAdvertising = advertising && advertising->isAdvertising();
     if (wasAdvertising) {
@@ -80,8 +80,9 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     gattInitializing = true;
-    Serial.println("[PSX-GATT] Creating service on shared server");
+    Serial.println("[PSX-GATT] Creating PSXCore companion service v7");
     Serial.printf("[PSX-GATT] Service UUID: %s\n", SERVICE_UUID);
+    Serial.printf("[PSX-GATT] Command UUID: %s\n", COMMAND_UUID);
 
     psxService = server->createService(SERVICE_UUID);
     if (!psxService) {
@@ -114,20 +115,17 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
 
-    Serial.println("[PSX-GATT] Starting complete custom service before advertising");
     psxService->start();
 
     gattReady = true;
     gattInitializing = false;
 
     Serial.println("[PSX-GATT] Service registered successfully");
-    Serial.println("[PSX-GATT] Custom PSXCore service READY on shared NimBLE server");
-    Serial.println("[PSX-GATT] GATT DATABASE: HID + PSXCore companion");
+    Serial.println("[PSX-GATT] GATT CONTRACT: Android + firmware UUIDs synchronized");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
-    Serial.println("[PSX-GATT] Shared advertising may now restart");
     return true;
 }
 
