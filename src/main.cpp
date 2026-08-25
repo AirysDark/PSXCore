@@ -72,6 +72,26 @@ static bool handleAnalogButtonEvent() {
   }
 }
 
+static void initializeControllerMode(uint8_t &controllerId) {
+  // Always request analog mode during boot. This must happen after the PSX
+  // controller has been detected and before the analog-button state layer is
+  // initialized, otherwise a controller that powers up in digital mode stays
+  // reported as digital until the physical ANALOG button is pressed.
+  Serial.println("[BOOT] Enabling PS2 analog mode...");
+  const bool analogEnabled = psx_enable_analog_mode();
+
+  // Probe again because the controller ID can change from 0x41 to 0x73/0x79
+  // immediately after the configuration sequence completes.
+  if (psxProbeController(&controllerId)) {
+    Serial.printf("[BOOT] Controller mode after setup: ID=%02X\n", controllerId);
+  } else {
+    Serial.println("[BOOT] Controller mode re-probe failed");
+  }
+
+  analogButtonInit(controllerId);
+  bootMark("Analog mode", analogEnabled && analogButtonIsAnalogMode());
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -108,7 +128,7 @@ void setup() {
 
   if (psxReady) {
     Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
-    analogButtonInit(controllerId);
+    initializeControllerMode(controllerId);
   } else {
     Serial.println("[BOOT] PSX controller      NO RESPONSE");
     Serial.println("[BOOT] Starting pin sweep recovery...");
@@ -120,7 +140,7 @@ void setup() {
 
       if (psxReady) {
         Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
-        analogButtonInit(controllerId);
+        initializeControllerMode(controllerId);
       } else {
         Serial.println("[BOOT] PSX controller      RESPONSE NOT CONFIRMED");
       }
@@ -131,6 +151,8 @@ void setup() {
 
   if (psxReady) {
     Serial.println("[BOOT] PSX input           ENABLED");
+    Serial.printf("[BOOT] ANALOG mode          %s\n",
+                  analogButtonIsAnalogMode() ? "ON" : "DIGITAL FALLBACK");
     Serial.println("[BOOT] ANALOG button       ENABLED (also wakes idle sleep)");
   } else {
     Serial.println("[BOOT] PSX input           SEARCHING");
