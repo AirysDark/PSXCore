@@ -99,6 +99,7 @@ void setup() {
   psxPinsBegin();
   Serial.println("[BOOT] Initializing PSXController library...");
   psxReady = beginPSXController();
+  debugStatusPSXState(psxReady);
 
   if (psxReady) {
     const PSXControllerState& state = psxController.state();
@@ -115,6 +116,7 @@ void setup() {
   Serial.println("[BOOT] Starting custom Bluetooth HID...");
   const bool bleReady = bleGamepad.begin("PSXCore Controller");
   bootMark("Bluetooth HID", bleReady);
+  debugStatusBLEState(bleGamepad.connected());
   Serial.println(bleReady ? "[BOOT] BLE advertising      ON" : "[BOOT] BLE advertising      FAIL");
 
   systemBooted = bleReady;
@@ -130,9 +132,17 @@ void loop() {
   if (!systemBooted) return;
 
   psxReady = psxController.update();
+  debugStatusPSXState(psxReady);
+  if (psxReady) {
+    debugStatusPSXPacket();
+  }
 
   const PSXInputState input = inputMapper.map(psxController.state());
-  bleGamepad.send(input);
+  const bool reportSent = bleGamepad.send(input);
+  debugStatusBLEState(bleGamepad.connected());
+  if (reportSent) {
+    debugStatusBLEUpdate();
+  }
 
   debugStatusLoop();
   delay(5);
