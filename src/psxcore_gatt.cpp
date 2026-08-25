@@ -131,7 +131,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     Serial.println("[PSX-GATT] Service registered successfully");
     Serial.println("[PSX-GATT] GATT CONTRACT: Android + firmware UUIDs synchronized");
-    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED");
+    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED + RETRY ON DELIVERY FAILURE");
     return true;
 }
 
@@ -166,11 +166,22 @@ static void enqueueTextFrame(std::deque<std::string>& queue, const char* text, b
 static bool sendNextFrame(NimBLECharacteristic* characteristic, std::deque<std::string>& queue, const char* label) {
     if (!gattReady || !characteristic || queue.empty()) return false;
 
-    std::string frame = std::move(queue.front());
-    queue.pop_front();
+    // Do not remove the frame until NimBLE confirms that the notification was
+    // accepted. The previous implementation popped first, so a notification
+    // failure silently lost GET_STATE and other messages while still printing
+    // a misleading TX line.
+    const std::string& frame = queue.front();
     characteristic->setValue(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
-    characteristic->notify();
-    Serial.printf("[PSX-GATT] TX %s: %u bytes\n", label, (unsigned)frame.size());
+
+    if (!characteristic->notify()) {
+        Serial.printf("[PSX-GATT] TX %s pending: notify not accepted; keeping %u-byte frame queued\n",
+                      label, (unsigned)frame.size());
+        return false;
+    }
+
+    const size_t length = frame.size();
+    queue.pop_front();
+    Serial.printf("[PSX-GATT] TX %s delivered: %u bytes\n", label, (unsigned)length);
     return true;
 }
 
