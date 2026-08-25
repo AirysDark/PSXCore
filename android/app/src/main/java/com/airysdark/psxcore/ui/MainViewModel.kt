@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -23,17 +25,18 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val tag = "MainViewModel"
     private val settingsRepository = SettingsRepository(application)
-    
+
     private val bluetoothManager = application.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     val bleScanner = BleScanner(bluetoothManager.adapter)
-    
+
     val bleConnectionManager = BleConnectionManager(application)
     val updateManager = UpdateManager(application, bleConnectionManager)
 
     val lastDeviceAddress: StateFlow<String?> = settingsRepository.lastDeviceAddress
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
-    
+
     val lastDeviceName: StateFlow<String?> = settingsRepository.lastDeviceName
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -45,6 +48,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isGamepadServiceReady = bleConnectionManager.isGamepadServiceReady
     val isCompanionServiceReady = bleConnectionManager.isCompanionServiceReady
     val isOtaReadyStatus = bleConnectionManager.isOtaReadyStatus
+
+    private val commandLock = Any()
+    private val lastCommandAt = mutableMapOf<String, Long>()
+
+    private fun sendControlCommand(command: String, cooldownMs: Long): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(commandLock) {
+            val previous = lastCommandAt[command]
+            if (previous != null && now - previous < cooldownMs) {
+                Log.d(tag, "[BLE] Duplicate command suppressed: $command (${now - previous}ms since previous)")
+                return false
+            }
+
+            val queued = bleConnectionManager.sendCommand(command)
+            if (queued) {
+                lastCommandAt[command] = now
+            } else {
+                Log.w(tag, "[BLE] Command was not queued: $command")
+            }
+            return queued
+        }
+    }
 
     fun startScan(serviceUuid: java.util.UUID? = null, name: String? = null) {
         if (!hasScanPermission()) {
@@ -91,37 +116,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
         } else {
-            true // Older versions use generic Bluetooth permission which is granted in manifest usually
+            true
         }
     }
 
     fun disconnect() {
+        synchronized(commandLock) {
+            lastCommandAt.clear()
+        }
         bleConnectionManager.disconnect()
     }
 
-    fun sendPing() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_PING)
-    }
+    fun sendPing(): Boolean = sendControlCommand(ProtocolConstants.CMD_PING, 350)
 
-    fun sendGetInfo() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_INFO)
-    }
+    fun sendGetInfo(): Boolean = sendControlCommand(ProtocolConstants.CMD_INFO, 500)
 
-    fun sendGetState() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_GET_STATE)
-    }
+    fun sendGetState(): Boolean = sendControlCommand(ProtocolConstants.CMD_GET_STATE, 350)
 
-    fun sendGetSettings() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_GET_SETTINGS)
-    }
+    fun sendGetSettings(): Boolean = sendControlCommand(ProtocolConstants.CMD_GET_SETTINGS, 500)
 
-    fun setAnalogMode() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_SET_ANALOG)
-    }
+    fun setAnalogMode(): Boolean = sendControlCommand(ProtocolConstants.CMD_SET_ANALOG, 1000)
 
-    fun requestOtaInfo() {
-        bleConnectionManager.sendCommand(ProtocolConstants.CMD_OTA_INFO)
-    }
+    fun requestOtaInfo(): Boolean = sendControlCommand(ProtocolConstants.CMD_OTA_INFO, 500)
 
     fun startOtaUpdate() {
         viewModelScope.launch {
