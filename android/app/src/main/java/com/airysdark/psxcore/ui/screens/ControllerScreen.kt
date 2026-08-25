@@ -140,8 +140,6 @@ fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
             return
         }
 
-        // Lock only the button that was pressed. The other controls remain
-        // available and their commands are serialized by the BLE write queue.
         busyButtons = busyButtons + label
         scope.launch {
             delay(350)
@@ -203,7 +201,12 @@ fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
 
 @Composable
 fun DebugLogCard(viewModel: MainViewModel) {
-    val receivedData by viewModel.bleConnectionManager.receivedData.collectAsState()
+    val debugLog by viewModel.bleConnectionManager.debugLog.collectAsState()
+    val logScrollState = rememberScrollState()
+
+    LaunchedEffect(debugLog) {
+        logScrollState.scrollTo(logScrollState.maxValue)
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -213,11 +216,11 @@ fun DebugLogCard(viewModel: MainViewModel) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(100.dp)
-                    .verticalScroll(rememberScrollState())
+                    .height(160.dp)
+                    .verticalScroll(logScrollState)
             ) {
                 Text(
-                    receivedData,
+                    text = if (debugLog.isBlank()) "Waiting for BLE activity..." else debugLog,
                     fontSize = 10.sp,
                     color = Color.Gray,
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
