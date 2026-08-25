@@ -6,10 +6,8 @@ static uint32_t bleUpdates = 0;
 static bool psxDetected = false;
 static bool bleConnected = false;
 
-static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
-
 void debugStatusInit() {
-  Serial.println("[DEBUG] status ready (5s interval)");
+  Serial.println("[DEBUG] status ready");
 }
 
 void debugStatusPSXPacket() {
@@ -34,7 +32,7 @@ void debugStatusLoop() {
   static uint32_t lastBleUpdates = 0;
 
   const uint32_t now = millis();
-  if (now - lastReport < STATUS_INTERVAL_MS) return;
+  if (now - lastReport < 1000) return;
 
   const uint32_t elapsedMs = now - lastReport;
   const uint32_t psxDelta = psxPackets - lastPsxPackets;
