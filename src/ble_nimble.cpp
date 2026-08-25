@@ -62,7 +62,8 @@ static void configureSharedAdvertising(){
   advertising->setName(BLE_DEVICE_NAME);
   advertising->setAppearance(0x03C4);
   advertising->addServiceUUID(HID_SERVICE_UUID);
-  advertising->setScanResponse(true);
+  // This NimBLE-Arduino version has no setScanResponse(bool) API.
+  // Keep advertising data compatible with the installed library.
   advertisingConfigured=true;
   bool started=advertising->start();
   delay(50);
