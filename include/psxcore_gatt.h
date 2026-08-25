@@ -17,8 +17,8 @@ bool psxCoreGattIsReady();
 // HID and PSXCore GATT remain services on the same physical BLE device.
 bool psxCoreGattRefreshAdvertising();
 
-// Queue outgoing notifications. Frames are copied and emitted serially by
-// psxCoreGattProcess() so a later setValue() cannot overwrite an earlier frame.
+// Compatibility hook for the existing BLE loop. Direct notifications are sent
+// immediately, so there is no outgoing frame queue to drain.
 void psxCoreGattProcess();
 
 void psxCoreGattSendResponse(const uint8_t* data, size_t length);
@@ -29,8 +29,8 @@ void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length);
 void psxCoreGattSendOtaStatusText(const char* text);
 
 // Compatibility API used by the existing BLE controller layer. These wrappers
-// deliberately use the newline-framed PSXCore v7 transport so Android can
-// reassemble fragmented notifications without mixing adjacent responses.
+// use the newline-framed PSXCore v7 transport so Android receives complete
+// logical messages without the custom 20-byte queue/chunk layer.
 void bleConfigSendText(const char* text);
 
 // The default argument belongs only in ble_gamepad.h. Keeping this declaration
