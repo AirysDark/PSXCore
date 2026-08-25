@@ -23,11 +23,6 @@ static const char* OTA_CONTROL_UUID = "7a4f0000-0000-4f50-5358-434f52450005";
 static const char* OTA_DATA_UUID    = "7a4f0000-0000-4f50-5358-434f52450006";
 static const char* OTA_STATUS_UUID  = "7a4f0000-0000-4f50-5358-434f52450007";
 
-static bool canAdvertise() {
-    NimBLEServer* server = NimBLEDevice::getServer();
-    return server && server->getConnectedCount() == 0;
-}
-
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.command) return;
@@ -65,9 +60,9 @@ bool psxCoreGattRefreshAdvertising() {
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     if (!advertising) return false;
 
-    // HID and the custom PSXCore service share one physical BLE connection.
-    // Do not restart advertising while a client is connected.
-    if (!canAdvertise()) return false;
+    // Advertising is managed by the shared BLE layer. Do not impose a second
+    // one-client policy here: NimBLE's configured connection capacity decides
+    // whether another central may connect.
     if (advertising->isAdvertising()) return true;
 
     const bool started = advertising->start();
@@ -140,7 +135,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
-    Serial.println("[BLE] Connection policy: ONE shared BLE client connection");
+    Serial.println("[BLE] Connection policy: shared server; advertising capacity managed centrally");
     return true;
 }
 
