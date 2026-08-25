@@ -27,3 +27,9 @@ void psxCoreGattSendState(const uint8_t* data, size_t length);
 void psxCoreGattSendStateText(const char* text);
 void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length);
 void psxCoreGattSendOtaStatusText(const char* text);
+
+// Compatibility API used by the existing BLE controller layer. These wrappers
+// deliberately use the newline-framed PSXCore v7 transport so Android can
+// reassemble fragmented notifications without mixing adjacent responses.
+void bleConfigSendText(const char* text);
+void bleConfigNotifyControllerState(bool force = false);
