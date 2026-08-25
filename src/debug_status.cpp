@@ -6,6 +6,8 @@ static uint32_t bleUpdates = 0;
 static bool psxDetected = false;
 static bool bleConnected = false;
 
+static constexpr uint32_t BLE_HEARTBEAT_INTERVAL_MS = 120000UL;
+
 void debugStatusInit() {
   Serial.println("[DEBUG] status ready");
 }
@@ -23,34 +25,35 @@ void debugStatusPSXState(bool detected) {
 }
 
 void debugStatusBLEState(bool connected) {
+  static bool previousConnected = false;
+
+  if (connected != previousConnected) {
+    Serial.printf("[BLE] App %s\n", connected ? "connected" : "disconnected");
+    previousConnected = connected;
+  }
+
   bleConnected = connected;
 }
 
 void debugStatusLoop() {
-  static uint32_t lastReport = 0;
-  static uint32_t lastPsxPackets = 0;
-  static uint32_t lastBleUpdates = 0;
+  static uint32_t lastHeartbeat = 0;
+
+  // Keep normal serial output quiet. Only print a heartbeat every two
+  // minutes while the Android app is actually connected over BLE.
+  if (!bleConnected) {
+    return;
+  }
 
   const uint32_t now = millis();
-  if (now - lastReport < 1000) return;
+  if (now - lastHeartbeat < BLE_HEARTBEAT_INTERVAL_MS) {
+    return;
+  }
 
-  const uint32_t elapsedMs = now - lastReport;
-  const uint32_t psxDelta = psxPackets - lastPsxPackets;
-  const uint32_t bleDelta = bleUpdates - lastBleUpdates;
+  lastHeartbeat = now;
 
-  lastReport = now;
-  lastPsxPackets = psxPackets;
-  lastBleUpdates = bleUpdates;
-
-  const uint32_t psxRate = elapsedMs ? (psxDelta * 1000UL) / elapsedMs : 0;
-  const uint32_t bleRate = elapsedMs ? (bleDelta * 1000UL) / elapsedMs : 0;
-
-  Serial.printf("[STATUS] uptime=%lus PSX=%s packets=%lu (%luHz) BLE=%s updates=%lu (%luHz)\n",
+  Serial.printf("[BLE] Connection heartbeat: CONNECTED | uptime=%lus PSX=%s packets=%lu BLE updates=%lu\n",
                 static_cast<unsigned long>(now / 1000UL),
                 psxDetected ? "OK" : "WAIT",
                 static_cast<unsigned long>(psxPackets),
-                static_cast<unsigned long>(psxRate),
-                bleConnected ? "CONNECTED" : "ADVERTISING",
-                static_cast<unsigned long>(bleUpdates),
-                static_cast<unsigned long>(bleRate));
+                static_cast<unsigned long>(bleUpdates));
 }
