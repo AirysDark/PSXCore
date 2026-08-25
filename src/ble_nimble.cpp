@@ -271,22 +271,41 @@ void ble_send_report() {
     // Drain exactly one queued companion notification per loop pass.
     psxCoreGattProcess();
 
-    bool connected = bleGamepad.isConnected();
+    // The Android companion uses the custom GATT service directly. Do not
+    // gate live state on the HID profile, because Android can have a valid
+    // GATT connection while BleGamepad::isConnected() is false.
+    const bool gattConnected = hasActiveBleClient();
+    const bool hidConnected = bleGamepad.isConnected();
+    const bool connected = gattConnected || hidConnected;
+
     debugStatusBLEState(connected);
     if (connected != lastConnected) {
-        Serial.printf("[BLE] HID %s\n", connected ? "CONNECTED" : "DISCONNECTED");
+        Serial.printf("[BLE] %s (GATT=%s, HID=%s)\n",
+                      connected ? "CONNECTED" : "DISCONNECTED",
+                      gattConnected ? "YES" : "NO",
+                      hidConnected ? "YES" : "NO");
         lastConnected = connected;
         if (connected && configReady) sendConfigHello();
         if (!connected) ensureAdvertising();
     }
-    if (!connected) return;
 
-    updatePsxButtons(controllerState.buttons);
-    bleGamepad.setLeftThumb(psxAxisToHid(controllerState.lx), psxAxisToHid(controllerState.ly));
-    bleGamepad.setRightThumb(psxAxisToHid(controllerState.rx), psxAxisToHid(controllerState.ry));
-    bleGamepad.sendReport();
-    bleConfigNotifyControllerState();
-    debugStatusBLEUpdate();
+    // Keep HID reporting independent. A companion-only connection must not
+    // prevent live state notifications from being produced.
+    if (hidConnected) {
+        updatePsxButtons(controllerState.buttons);
+        bleGamepad.setLeftThumb(psxAxisToHid(controllerState.lx), psxAxisToHid(controllerState.ly));
+        bleGamepad.setRightThumb(psxAxisToHid(controllerState.rx), psxAxisToHid(controllerState.ry));
+        bleGamepad.sendReport();
+    }
+
+    // Push changed controller state whenever the custom GATT client is
+    // connected and subscribed. GET_STATE remains available as a manual
+    // snapshot, but the companion no longer needs to refresh to stay live.
+    if (gattConnected && configReady) {
+        bleConfigNotifyControllerState();
+    }
+
+    if (connected) debugStatusBLEUpdate();
 }
 
 void bleGamepadBegin() { ble_init(); debugStatusBLEState(false); }
