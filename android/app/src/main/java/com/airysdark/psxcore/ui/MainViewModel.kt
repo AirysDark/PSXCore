@@ -7,7 +7,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+<<<<<<< Updated upstream
 import android.os.SystemClock
+=======
+>>>>>>> Stashed changes
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -127,6 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         bleConnectionManager.disconnect()
     }
 
+<<<<<<< Updated upstream
     fun sendPing(): Boolean = sendControlCommand(ProtocolConstants.CMD_PING, 350)
 
     fun sendGetInfo(): Boolean = sendControlCommand(ProtocolConstants.CMD_INFO, 500)
@@ -138,6 +142,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setAnalogMode(): Boolean = sendControlCommand(ProtocolConstants.CMD_SET_ANALOG, 1000)
 
     fun requestOtaInfo(): Boolean = sendControlCommand(ProtocolConstants.CMD_OTA_INFO, 500)
+=======
+    private val commandCooldowns = mutableMapOf<String, Long>()
+    private val COOLDOWN_MS = 1000L
+
+    private fun canSendWithCooldown(key: String): Boolean {
+        val now = System.currentTimeMillis()
+        val last = commandCooldowns[key] ?: 0L
+        if (now - last < COOLDOWN_MS) {
+            Log.d("PSXCore", "UI Debounce: Skipping command $key")
+            return false
+        }
+        commandCooldowns[key] = now
+        return true
+    }
+
+    fun sendPing() {
+        if (canSendWithCooldown("PING")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_PING)
+        }
+    }
+
+    fun sendGetInfo() {
+        if (canSendWithCooldown("INFO")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_INFO)
+        }
+    }
+
+    fun sendGetState() {
+        if (canSendWithCooldown("GET_STATE")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_GET_STATE)
+        }
+    }
+
+    fun sendGetSettings() {
+        if (canSendWithCooldown("GET_SETTINGS")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_GET_SETTINGS)
+        }
+    }
+
+    fun setAnalogMode() {
+        if (canSendWithCooldown("SET_ANALOG")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_SET_ANALOG)
+        }
+    }
+
+    fun requestOtaInfo() {
+        if (canSendWithCooldown("OTA_INFO")) {
+            bleConnectionManager.sendCommand(ProtocolConstants.CMD_OTA_INFO)
+        }
+    }
+>>>>>>> Stashed changes
 
     fun startOtaUpdate() {
         viewModelScope.launch {

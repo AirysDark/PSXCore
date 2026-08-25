@@ -93,7 +93,7 @@ class BleConnectionManager(private val context: Context) {
         val writeType: Int
     )
 
-    private val textWriteQueue = mutableListOf<PendingTextWrite>()
+    private val textWriteQueue = ArrayDeque<PendingTextWrite>()
     private var textWriteInProgress = false
 
     private val parser = PsxCoreMessageParser()
@@ -158,7 +158,9 @@ class BleConnectionManager(private val context: Context) {
                 if (psxService == null && !serviceDiscoveryRetried) {
                     Log.w(tag, "[BLE] PSXCore service not found. Retrying discovery in 1s (stale cache?)")
                     serviceDiscoveryRetried = true
-                    handler.postDelayed({ gatt.discoverServices() }, 1000)
+                    handler.postDelayed({
+                        gatt.discoverServices()
+                    }, 1000)
                     return
                 }
 
@@ -223,7 +225,7 @@ class BleConnectionManager(private val context: Context) {
             }
             
             synchronized(textWriteQueue) {
-                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeAt(0)
+                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeFirst()
                 textWriteInProgress = false
             }
             processNextTextWrite(gatt)
@@ -262,11 +264,17 @@ class BleConnectionManager(private val context: Context) {
         when (uuid) {
             ProtocolConstants.PSX_RESPONSE_UUID -> {
                 processStream(data, responseBuffer) { message ->
-                    Log.d(tag, "[BLE-RES] Incoming: $message")
+                    Log.d(tag, "[BLE-RES] Incoming message: $message")
                     _receivedData.value = message
                     if (message.startsWith("{")) {
-                        parser.parseDeviceInfo(message)?.let { _deviceInfo.value = it }
-                        parser.parseDeviceSettings(message)?.let { _deviceSettings.value = it }
+                        parser.parseDeviceInfo(message)?.let { 
+                            Log.d(tag, "[BLE] Parsed Info: v${it.firmwareVersion}")
+                            _deviceInfo.value = it 
+                        }
+                        parser.parseDeviceSettings(message)?.let { 
+                            Log.d(tag, "[BLE] Parsed Settings")
+                            _deviceSettings.value = it 
+                        }
                     } else if (message == "PONG") {
                         Log.d(tag, "[BLE] Received PONG")
                     }
@@ -288,6 +296,8 @@ class BleConnectionManager(private val context: Context) {
                         parser.parseOtaReady(message)?.let { _otaReady.tryEmit(it) }
                         if (parser.parseOtaSuccess(message)) _otaResult.tryEmit(Result.success(Unit))
                         parser.parseOtaError(message)?.let { _otaResult.tryEmit(Result.failure(Exception(it))) }
+                    } else if (message.startsWith("OTA_PROGRESS:")) {
+                        // Handle legacy
                     } else if (message == "OTA_READY") {
                         _otaReady.tryEmit(180)
                     } else if (message == "OTA_SUCCESS") {
@@ -301,8 +311,9 @@ class BleConnectionManager(private val context: Context) {
     private fun processStream(data: ByteArray, buffer: StringBuilder, onMessage: (String) -> Unit) {
         val chunk = String(data, StandardCharsets.UTF_8)
         synchronized(buffer) {
+            // Safety: if buffer gets too large without a newline, something is wrong
             if (buffer.length > 4096) {
-                Log.w(tag, "[BLE] Stream buffer overflow; clearing stale data. Current buffer: ${buffer.toString()}")
+                Log.w(tag, "[BLE] Stream buffer overflow ($tag); clearing stale data. Current buffer: ${buffer.toString()}")
                 buffer.setLength(0)
             }
 
@@ -320,11 +331,19 @@ class BleConnectionManager(private val context: Context) {
                         val parts = message.replace("}{", "}\n{").split("\n")
                         parts.forEach { part ->
                             if (part.isNotEmpty()) {
-                                try { onMessage(part) } catch (e: Exception) { Log.e(tag, "[BLE] Error: ${e.message}") }
+                                try {
+                                    onMessage(part)
+                                } catch (e: Exception) {
+                                    Log.e(tag, "[BLE] Error processing sub-message: ${e.message}")
+                                }
                             }
                         }
                     } else {
-                        try { onMessage(message) } catch (e: Exception) { Log.e(tag, "[BLE] Error: ${e.message}") }
+                        try {
+                            onMessage(message)
+                        } catch (e: Exception) {
+                            Log.e(tag, "[BLE] Error processing message: ${e.message}")
+                        }
                     }
                 }
             }
@@ -333,10 +352,19 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
-        _isGamepadServiceReady.value = gatt.getService(ProtocolConstants.HID_SERVICE_UUID) != null
+        // Check for Gamepad Service
+        val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
+        if (hidService != null) {
+            Log.d(tag, "[BLE] Gamepad (HID) service found")
+            _isGamepadServiceReady.value = true
+        } else {
+            Log.w(tag, "[BLE] Gamepad (HID) service not found")
+            _isGamepadServiceReady.value = false
+        }
 
         val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
         if (service != null) {
+            Log.d(tag, "[BLE] PSXCore custom service found: ${service.uuid}")
             commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
             responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
             controllerStateChar = service.getCharacteristic(ProtocolConstants.PSX_CONTROLLER_STATE_UUID)
@@ -344,6 +372,7 @@ class BleConnectionManager(private val context: Context) {
             otaDataChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_DATA_UUID)
             otaStatusChar = service.getCharacteristic(ProtocolConstants.PSX_OTA_STATUS_UUID)
 
+            // Queue up notifications
             synchronized(descriptorQueue) {
                 descriptorQueue.clear()
                 listOf(responseChar, controllerStateChar, otaStatusChar).filterNotNull().forEach { char ->
@@ -410,10 +439,18 @@ class BleConnectionManager(private val context: Context) {
         characteristic: BluetoothGattCharacteristic,
         writeType: Int
     ): Boolean {
-        val gatt = bluetoothGatt ?: return false
+        val gatt = bluetoothGatt ?: run {
+            Log.e(tag, "[BLE] No GATT connection for write: $label")
+            return false
+        }
         val data = (if (label.endsWith("\n")) label else "$label\n").toByteArray(StandardCharsets.UTF_8)
         synchronized(textWriteQueue) {
-            textWriteQueue.add(PendingTextWrite(label.trim(), characteristic, data, writeType))
+            // Prevent exact duplicates already in queue
+            if (textWriteQueue.any { it.label == label.trim() && it.characteristic == characteristic }) {
+                Log.d(tag, "[BLE] Command already in queue, skipping: $label")
+                return true
+            }
+            textWriteQueue.addLast(PendingTextWrite(label.trim(), characteristic, data, writeType))
         }
         processNextTextWrite(gatt)
         return true
@@ -431,11 +468,15 @@ class BleConnectionManager(private val context: Context) {
 
         val started = writeCharacteristicCompat(gatt, next.characteristic, next.value, next.writeType)
         if (!started) {
+            Log.e(tag, "[BLE] Failed to start write (BUSY or error): ${next.label}")
             synchronized(textWriteQueue) {
-                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeAt(0)
+                if (textWriteQueue.isNotEmpty()) textWriteQueue.removeFirst()
                 textWriteInProgress = false
             }
-            handler.postDelayed({ processNextTextWrite(gatt) }, 100)
+            // Retry later
+            handler.postDelayed({ processNextTextWrite(gatt) }, 200)
+        } else {
+            Log.d(tag, "[BLE] Command TX started: ${next.label}")
         }
     }
 
@@ -443,6 +484,11 @@ class BleConnectionManager(private val context: Context) {
     suspend fun sendOtaData(data: ByteArray): Boolean {
         val char = otaDataChar ?: return false
         val gatt = bluetoothGatt ?: return false
+        
+        // Raw data might still conflict with text writes if not careful.
+        // For OTA data, we usually want high speed but we still shouldn't call 
+        // writeCharacteristic while textWriteInProgress is true.
+        // However, OTA data is usually sent in its own mode.
         return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
     }
 
