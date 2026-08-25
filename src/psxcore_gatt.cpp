@@ -138,13 +138,39 @@ static void sendCharacteristic(
     characteristic->notify();
 }
 
+static void sendTextFrame(NimBLECharacteristic* characteristic, const char* text) {
+    if (!text) return;
+
+    const size_t length = strlen(text);
+    if (!length) return;
+
+    // The Android companion treats RESPONSE, STATE and OTA_STATUS as framed
+    // streams. Always terminate text messages so back-to-back BLE notifications
+    // cannot be merged into one unparseable message.
+    if (text[length - 1] == '\n') {
+        sendCharacteristic(
+            characteristic,
+            reinterpret_cast<const uint8_t*>(text),
+            length
+        );
+        return;
+    }
+
+    std::string framed(text, length);
+    framed.push_back('\n');
+    sendCharacteristic(
+        characteristic,
+        reinterpret_cast<const uint8_t*>(framed.data()),
+        framed.size()
+    );
+}
+
 void psxCoreGattSendResponse(const uint8_t* data, size_t length) {
     sendCharacteristic(responseChar, data, length);
 }
 
 void psxCoreGattSendResponseText(const char* text) {
-    if (text) psxCoreGattSendResponse(
-        reinterpret_cast<const uint8_t*>(text), strlen(text));
+    sendTextFrame(responseChar, text);
 }
 
 void psxCoreGattSendState(const uint8_t* data, size_t length) {
@@ -152,8 +178,7 @@ void psxCoreGattSendState(const uint8_t* data, size_t length) {
 }
 
 void psxCoreGattSendStateText(const char* text) {
-    if (text) psxCoreGattSendState(
-        reinterpret_cast<const uint8_t*>(text), strlen(text));
+    sendTextFrame(stateChar, text);
 }
 
 void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
@@ -161,6 +186,5 @@ void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
 }
 
 void psxCoreGattSendOtaStatusText(const char* text) {
-    if (text) psxCoreGattSendOtaStatus(
-        reinterpret_cast<const uint8_t*>(text), strlen(text));
+    sendTextFrame(otaStatusChar, text);
 }
