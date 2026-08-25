@@ -12,6 +12,7 @@
 #include "ble_gamepad.h"
 #include "psx_config.h"
 #include "analog_button.h"
+#include "power_manager.h"
 #include "sd_update.h"
 #include "debug_status.h"
 
@@ -53,23 +54,21 @@ static bool testPsram() {
 #endif
 }
 
-static void handleAnalogButtonEvent() {
+static bool handleAnalogButtonEvent() {
   switch (analogButtonTakeEvent()) {
     case AnalogButtonEvent::ShortPress:
       Serial.printf("[ANALOG] Short press: %s mode\n",
                     analogButtonIsAnalogMode() ? "ANALOG" : "DIGITAL");
-      // Future hook: if the system is sleeping, this event can request wake.
-      // Future hook: this event can start BLE discovery/advertising.
-      break;
+      powerManagerWake();
+      return true;
 
     case AnalogButtonEvent::LongPress:
-      // Reserved for future controllers/hardware that expose ANALOG as a
-      // continuously-held signal. Standard PS2 protocol does not provide one.
       Serial.println("[ANALOG] Long press event");
-      break;
+      powerManagerWake();
+      return true;
 
     default:
-      break;
+      return false;
   }
 }
 
@@ -97,9 +96,7 @@ void setup() {
 
   Serial.println("[BOOT] Checking optional SD update...");
   const bool updateApplied = sdUpdateCheck();
-  if (updateApplied) {
-    return;
-  }
+  if (updateApplied) return;
   Serial.println("[BOOT] No SD update - continuing");
 
   Serial.println("[BOOT] Initializing PSX bus...");
@@ -134,7 +131,7 @@ void setup() {
 
   if (psxReady) {
     Serial.println("[BOOT] PSX input           ENABLED");
-    Serial.println("[BOOT] ANALOG button       ENABLED (controller-controlled mode toggle)");
+    Serial.println("[BOOT] ANALOG button       ENABLED (also wakes idle sleep)");
   } else {
     Serial.println("[BOOT] PSX input           SEARCHING");
     Serial.println("[BOOT] ANALOG button       WAITING FOR CONTROLLER");
@@ -144,6 +141,12 @@ void setup() {
   bleGamepadBegin();
   bootMark("Bluetooth HID", true);
   Serial.println("[BOOT] BLE advertising      ON");
+
+  ControllerState idleState{};
+  idleState.lx = idleState.ly = idleState.rx = idleState.ry = 0x80;
+  controllerState = idleState;
+  powerManagerBegin(idleState);
+  Serial.println("[BOOT] Idle sleep           5 MINUTES");
 
   systemBooted = true;
 
@@ -157,12 +160,20 @@ void setup() {
 void loop() {
   if (!systemBooted) return;
 
+  bool analogEvent = false;
   if (psxReady) {
     psxReadController();
-    handleAnalogButtonEvent();
+    analogEvent = handleAnalogButtonEvent();
+    powerManagerUpdate(controllerState, analogEvent);
   }
 
-  bleGamepadUpdate();
-  debugStatusLoop();
-  delay(5);
+  if (!powerManagerIsSleeping()) {
+    bleGamepadUpdate();
+    debugStatusLoop();
+    delay(5);
+  } else {
+    // Keep a slow PSX poll running so any button/stick movement or ANALOG mode
+    // transition can wake the controller without requiring a power cycle.
+    delay(100);
+  }
 }
