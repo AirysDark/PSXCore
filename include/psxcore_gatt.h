@@ -32,4 +32,8 @@ void psxCoreGattSendOtaStatusText(const char* text);
 // deliberately use the newline-framed PSXCore v7 transport so Android can
 // reassemble fragmented notifications without mixing adjacent responses.
 void bleConfigSendText(const char* text);
-void bleConfigNotifyControllerState(bool force = false);
+
+// The default argument belongs only in ble_gamepad.h. Keeping this declaration
+// without a default avoids a duplicate default argument when both headers are
+// included by ble_nimble.cpp.
+void bleConfigNotifyControllerState(bool force);
