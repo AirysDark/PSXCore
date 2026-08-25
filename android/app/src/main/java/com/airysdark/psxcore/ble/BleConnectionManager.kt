@@ -186,6 +186,7 @@ class BleConnectionManager(private val context: Context) {
                 // Request initial state after READY
                 sendCommand(ProtocolConstants.CMD_GET_STATE)
                 sendCommand(ProtocolConstants.CMD_INFO)
+                sendCommand(ProtocolConstants.CMD_GET_SETTINGS)
             }
         }
     }
