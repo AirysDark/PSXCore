@@ -18,9 +18,14 @@ import com.airysdark.psxcore.model.DeviceInfo
 import com.airysdark.psxcore.model.DeviceSettings
 import com.airysdark.psxcore.protocol.ProtocolConstants
 import com.airysdark.psxcore.protocol.PsxCoreMessageParser
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.charset.StandardCharsets
 
 enum class ConnectionState {
@@ -57,9 +62,17 @@ class BleConnectionManager(private val context: Context) {
     private val _batteryLevel = MutableStateFlow<Int?>(null)
     val batteryLevel: StateFlow<Int?> = _batteryLevel.asStateFlow()
 
+    private val _otaReady = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+    val otaReady = _otaReady.asSharedFlow()
+
+    private val _otaResult = MutableSharedFlow<Result<Unit>>(extraBufferCapacity = 1)
+    val otaResult = _otaResult.asSharedFlow()
+
     private var txCharacteristic: BluetoothGattCharacteristic? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var batteryCharacteristic: BluetoothGattCharacteristic? = null
+
+    private var pendingWrite: CompletableDeferred<Int>? = null
 
     private val parser = PsxCoreMessageParser()
     private var messageBuffer = StringBuilder()
@@ -113,7 +126,11 @@ class BleConnectionManager(private val context: Context) {
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            processData(characteristic.value ?: return, characteristic)
+            // On some Android versions, both onCharacteristicChanged overloads are called.
+            // We use a flag or only handle the modern one if we're on Tiramisu+.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                processData(characteristic.value ?: return, characteristic)
+            }
         }
 
         override fun onCharacteristicChanged(
@@ -128,15 +145,20 @@ class BleConnectionManager(private val context: Context) {
             when (characteristic.uuid) {
                 ProtocolConstants.PSX_TX_UUID -> {
                     val chunk = String(data, StandardCharsets.UTF_8)
-                    messageBuffer.append(chunk)
                     
-                    if (chunk.contains("\n")) {
-                        val content = messageBuffer.toString()
-                        val messages = content.split("\n")
-                        for (i in 0 until messages.size - 1) {
-                            processIncomingMessage(messages[i].trim())
+                    synchronized(messageBuffer) {
+                        messageBuffer.append(chunk)
+                        
+                        var newlineIndex: Int
+                        while (messageBuffer.indexOf("\n").also { newlineIndex = it } >= 0) {
+                            val message = messageBuffer.substring(0, newlineIndex).trim()
+                            messageBuffer.delete(0, newlineIndex + 1)
+                            
+                            if (message.isNotEmpty()) {
+                                Log.d(tag, "[BLE] Complete message: $message")
+                                processIncomingMessage(message)
+                            }
                         }
-                        messageBuffer = StringBuilder(messages.last())
                     }
                 }
                 ProtocolConstants.BATTERY_LEVEL_UUID -> {
@@ -179,19 +201,34 @@ class BleConnectionManager(private val context: Context) {
 
     private fun processIncomingMessage(message: String) {
         if (message.isEmpty()) return
-        Log.d(tag, "[BLE] Incoming: $message")
-        _receivedData.value = message
+        
+        // Update debug log with the latest message
+        val currentLog = _receivedData.value
+        val newLog = if (currentLog.length > 500) {
+            message + "\n" + currentLog.substring(0, 400)
+        } else {
+            message + "\n" + currentLog
+        }
+        _receivedData.value = newLog
         
         if (message.startsWith("{")) {
+            // Attempt to parse as different message types
             parser.parseState(message, _inputState.value.packetCount + 1)?.let {
                 _inputState.value = it
+                return
             }
             parser.parseDeviceInfo(message)?.let {
+                Log.d(tag, "[BLE] Parsed Device Info: v${it.firmwareVersion}")
                 _deviceInfo.value = it
+                return
             }
             parser.parseDeviceSettings(message)?.let {
+                Log.d(tag, "[BLE] Parsed Device Settings")
                 _deviceSettings.value = it
+                return
             }
+        } else if (message == "PONG") {
+            Log.d(tag, "[BLE] Received PONG")
         }
     }
 
@@ -229,10 +266,8 @@ class BleConnectionManager(private val context: Context) {
             batteryCharacteristic = batteryService.getCharacteristic(ProtocolConstants.BATTERY_LEVEL_UUID)
             if (batteryCharacteristic != null) {
                 gatt.setCharacteristicNotification(batteryCharacteristic!!, true)
-                val descriptor = batteryCharacteristic!!.getDescriptor(ProtocolConstants.CCCD_UUID)
-                if (descriptor != null) {
-                    writeDescriptorCompat(gatt, descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-                }
+                // Note: In a production app with multiple notifications, we would queue these.
+                // We prioritize the primary PSX TX characteristic above.
             }
         }
     }
@@ -353,6 +388,9 @@ class BleConnectionManager(private val context: Context) {
         _inputState.value = ControllerInputState()
         _deviceInfo.value = DeviceInfo()
         _deviceSettings.value = DeviceSettings()
-        messageBuffer = StringBuilder()
+        _batteryLevel.value = null
+        synchronized(messageBuffer) {
+            messageBuffer.setLength(0)
+        }
     }
 }

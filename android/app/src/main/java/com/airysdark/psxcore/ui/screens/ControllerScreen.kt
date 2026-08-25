@@ -139,8 +139,11 @@ fun DebugLogCard(viewModel: MainViewModel) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Debug Log", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            Box(modifier = Modifier.fillMaxWidth().height(60.dp)) {
-                Text(receivedData, fontSize = 12.sp, color = Color.Gray)
+            Box(modifier = Modifier
+                .fillMaxWidth()
+                .height(100.dp)
+                .verticalScroll(rememberScrollState())) {
+                Text(receivedData, fontSize = 10.sp, color = Color.Gray, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
             }
         }
     }

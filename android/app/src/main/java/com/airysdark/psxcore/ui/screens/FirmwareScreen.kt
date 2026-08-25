@@ -24,6 +24,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
     val progress by viewModel.updateManager.progress.collectAsState()
     val fileName by viewModel.updateManager.selectedFileName.collectAsState()
     val fileSize by viewModel.updateManager.selectedFileSize.collectAsState()
+    val deviceInfo by viewModel.deviceInfo.collectAsState()
     val connectionState by viewModel.bleConnectionManager.connectionState.collectAsState()
     val scrollState = rememberScrollState()
 
@@ -50,7 +51,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Current Version", fontWeight = FontWeight.Bold)
-                Text(if (connectionState == ConnectionState.READY) "v0.1.0 (Detected)" else "Not connected", color = Color.Gray)
+                Text(if (connectionState == ConnectionState.READY) "${deviceInfo.firmwareVersion} (Detected)" else "Not connected", color = Color.Gray)
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 

@@ -31,6 +31,7 @@ class PsxCoreMessageParser {
                     start = PsxButtonMapping.isPressed(buttons, PsxButton.START),
                     select = PsxButtonMapping.isPressed(buttons, PsxButton.SELECT),
                     analogButton = PsxButtonMapping.isPressed(buttons, PsxButton.ANALOG),
+                    analogMode = json.optBoolean("analog", false),
                     leftStickX = json.optInt("lx", 128),
                     leftStickY = json.optInt("ly", 128),
                     rightStickX = json.optInt("rx", 128),
@@ -51,7 +52,7 @@ class PsxCoreMessageParser {
                 DeviceInfo(
                     firmwareVersion = json.optString("version", "Unknown"),
                     hardwareRevision = json.optString("hardware", "Unknown"),
-                    deviceName = json.optString("name", "PSXCore"),
+                    deviceName = json.optString("device", json.optString("name", "PSXCore")),
                     buildDate = json.optString("build", "Unknown"),
                     otaSupport = json.optBoolean("ota", false)
                 )
