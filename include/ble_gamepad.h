@@ -5,12 +5,11 @@
 void bleGamepadBegin();
 void bleGamepadUpdate();
 
-// Android companion/configuration channel. Uses the Nordic UART Service
-// hosted by the same NimBLE server as the HID gamepad.
+// Android companion/configuration channel on the same NimBLE server as HID.
 bool bleConfigIsReady();
 void bleConfigSend(const uint8_t* data, size_t length);
 void bleConfigSendText(const char* text);
 
-// Android companion protocol.
-// Send the current controller state as a JSON notification when it changes.
-void bleConfigNotifyControllerState();
+// Send controller state. Force mode is used for explicit GET_STATE requests;
+// normal mode only emits when the controller state changed.
+void bleConfigNotifyControllerState(bool force = false);
