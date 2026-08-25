@@ -54,24 +54,24 @@ bool psxCoreGattRefreshAdvertising() {
         return false;
     }
 
-    if (advertising->isAdvertising()) advertising->stop();
-    delay(50);
-
-    // Force the local GAP name used by Android scans.
     NimBLEDevice::setDeviceName(DEVICE_NAME);
+    if (advertising->isAdvertising()) advertising->stop();
+    delay(100);
+
+    advertising->reset();
     advertising->setName(DEVICE_NAME);
-    advertising->setAppearance(0x03C4); // generic gamepad appearance
+    advertising->setAppearance(0x03C4);
     advertising->addServiceUUID(SERVICE_UUID);
     advertising->setScanResponse(true);
-    advertising->start();
 
-    delay(25);
+    bool started = advertising->start();
+    delay(100);
     bool advertisingNow = advertising->isAdvertising();
-    Serial.printf("[BLE] Advertising restart: %s\n", advertisingNow ? "OK" : "FAILED");
+    Serial.printf("[BLE] Advertising start: %s\n", (started && advertisingNow) ? "OK" : "FAILED");
     if (advertisingNow) {
         Serial.printf("[BLE] DISCOVERABLE NAME: %s\n", DEVICE_NAME);
         Serial.println("[BLE] Android scan should show: PSXCore");
-        Serial.println("[BLE] Advertised services: HID + PSXCore custom GATT");
+        Serial.println("[BLE] Advertised service: PSXCore custom GATT");
     }
     return advertisingNow;
 }
