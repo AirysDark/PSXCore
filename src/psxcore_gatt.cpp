@@ -4,8 +4,6 @@
 #include <string>
 
 #include "psxcore_gatt.h"
-#include "controller_state.h"
-#include "psx_analog_mode.h"
 
 static NimBLEService* psxService = nullptr;
 static NimBLECharacteristic* commandChar = nullptr;
@@ -84,7 +82,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-    bool wasAdvertising = advertising && advertising->isAdvertising();
+    const bool wasAdvertising = advertising && advertising->isAdvertising();
     if (wasAdvertising) {
         Serial.println("[PSX-GATT] Stopping advertising before GATT database update");
         advertising->stop();
@@ -119,7 +117,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     commandChar->setCallbacks(&commandCallbacks);
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
-    // NimBLE-Arduino starts services with the server; start() is deprecated and has no effect.
 
     responseQueue.clear();
     stateQueue.clear();
@@ -185,24 +182,3 @@ void psxCoreGattSendState(const uint8_t* data, size_t length) { enqueueFrame(sta
 void psxCoreGattSendStateText(const char* text) { enqueueTextFrame(stateQueue, text, true); }
 void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) { enqueueFrame(otaQueue, data, length, false); }
 void psxCoreGattSendOtaStatusText(const char* text) { enqueueTextFrame(otaQueue, text, false); }
-
-void bleConfigNotifyControllerState(bool force) {
-    (void)force;
-    char message[192];
-    snprintf(message, sizeof(message),
-        "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u,\"analog\":%s}",
-        (unsigned long)controllerState.buttons,
-        (unsigned)controllerState.lx,
-        (unsigned)controllerState.ly,
-        (unsigned)controllerState.rx,
-        (unsigned)controllerState.ry,
-        psxIsAnalogMode() ? "true" : "false");
-    psxCoreGattSendStateText(message);
-}
-
-void bleConfigSendText(const char* text) {
-    psxCoreGattSendResponseText(text);
-    if (text && strstr(text, "\"command\":\"SET_ANALOG\"") != nullptr) {
-        bleConfigNotifyControllerState(true);
-    }
-}
