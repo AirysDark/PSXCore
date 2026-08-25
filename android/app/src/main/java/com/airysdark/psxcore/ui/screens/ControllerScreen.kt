@@ -203,7 +203,8 @@ fun ConnectionStatusHeader(
                         ConnectionState.CONNECTING, 
                         ConnectionState.DISCOVERING_SERVICES, 
                         ConnectionState.ENABLING_NOTIFICATIONS -> Color.Blue
-                        ConnectionState.ERROR -> Color.Red
+                        ConnectionState.ERROR,
+                        ConnectionState.COMPANION_MISSING -> Color.Red
                         ConnectionState.DISCONNECTED -> Color.Gray
                     }
                     Surface(
@@ -219,6 +220,7 @@ fun ConnectionStatusHeader(
                             ConnectionState.DISCOVERING_SERVICES -> "Discovering..."
                             ConnectionState.ENABLING_NOTIFICATIONS -> "Initializing..."
                             ConnectionState.ERROR -> "Error"
+                            ConnectionState.COMPANION_MISSING -> "Companion Service Missing"
                             ConnectionState.DISCONNECTED -> "Disconnected"
                         },
                         fontSize = 14.sp,
@@ -227,7 +229,7 @@ fun ConnectionStatusHeader(
                 }
             }
 
-            if (state == ConnectionState.READY) {
+            if (state == ConnectionState.READY || state == ConnectionState.COMPANION_MISSING) {
                 Button(onClick = {
                     Log.d("PSXCore", "Button clicked: Disconnect")
                     onDisconnect()

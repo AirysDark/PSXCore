@@ -34,7 +34,8 @@ enum class ConnectionState {
     DISCOVERING_SERVICES,
     ENABLING_NOTIFICATIONS,
     READY,
-    ERROR
+    ERROR,
+    COMPANION_MISSING
 }
 
 class BleConnectionManager(private val context: Context) {
@@ -269,6 +270,12 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
+        // Log all discovered services for debugging
+        Log.d(tag, "[BLE] Discovered services:")
+        gatt.services.forEach { service ->
+            Log.d(tag, "[BLE]   - Service: ${service.uuid}")
+        }
+
         // Check for Gamepad Service
         val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
         if (hidService != null) {
@@ -281,7 +288,7 @@ class BleConnectionManager(private val context: Context) {
 
         val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
         if (service != null) {
-            Log.d(tag, "[BLE] PSXCore custom service found")
+            Log.d(tag, "[BLE] PSXCore custom service found: ${service.uuid}")
             commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
             responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
             controllerStateChar = service.getCharacteristic(ProtocolConstants.PSX_CONTROLLER_STATE_UUID)
@@ -299,8 +306,10 @@ class BleConnectionManager(private val context: Context) {
             }
             processNextDescriptor(gatt)
         } else {
-            Log.w(tag, "[BLE] PSXCore service not found")
-            handleError()
+            Log.e(tag, "[BLE] PSXCore custom service MISSING! UUID: ${ProtocolConstants.PSXCORE_SERVICE_UUID}")
+            _connectionState.value = ConnectionState.COMPANION_MISSING
+            isConnecting = false
+            handler.removeCallbacks(timeoutRunnable)
         }
     }
 
