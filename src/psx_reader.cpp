@@ -9,8 +9,14 @@
 #include "debug_status.h"
 #include "analog_button.h"
 
+static bool rawDebugEnabled = false;
+
 static bool validControllerId(uint8_t id) {
   return id == 0x41 || id == 0x73 || id == 0x79;
+}
+
+void psxSetRawDebugEnabled(bool enabled) {
+  rawDebugEnabled = enabled;
 }
 
 void psxBegin() {
@@ -106,7 +112,9 @@ void psxReadController() {
   digitalWrite(psxPins.command, HIGH);
   digitalWrite(psxPins.clock, HIGH);
 
-  if (diagnosticTransactions < 12) {
+  // Continue reading immediately from boot, but do not interleave the first
+  // diagnostic packets with asynchronous NimBLE startup/advertising output.
+  if (rawDebugEnabled && diagnosticTransactions < 12) {
     Serial.printf("[PSX RAW %lu] ACK=%s",
                   (unsigned long)diagnosticTransactions,
                   ackSeen ? "YES" : "NO");
@@ -120,14 +128,8 @@ void psxReadController() {
     return;
   }
 
-  // The physical ANALOG switch is represented by the controller changing its
-  // response ID, not by a normal button-mask bit. Feed that transition into
-  // the system-button layer before decoding the normal controller state.
   analogButtonUpdate(packet[1]);
 
-  // Digital controllers return only the two button bytes. Keep those valid,
-  // but never interpret trailing bytes as analog axes unless the controller
-  // explicitly reports an analog-capable mode.
   if (packet[1] == 0x41) {
     packet[5] = 0x80;
     packet[6] = 0x80;
