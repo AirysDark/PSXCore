@@ -3,40 +3,59 @@
 #include "controller_state.h"
 #include "debug_status.h"
 #include "ble_gamepad.h"
+#include "psx_analog_mode.h"
 
 BleGamepad bleGamepad("PSXCore ESP32-S3", "AirysDark", 100, true);
 
 static bool lastConnected = false;
 static bool configReady = false;
+static uint32_t lastStateButtons = UINT32_MAX;
+static uint8_t lastStateLx = 0xFF;
+static uint8_t lastStateLy = 0xFF;
+static uint8_t lastStateRx = 0xFF;
+static uint8_t lastStateRy = 0xFF;
 
 static int16_t psxAxisToHid(uint8_t value) {
   return static_cast<int16_t>((static_cast<uint32_t>(value) * 32767U + 127U) / 255U);
 }
 
 static void sendConfigHello() {
-  bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"transport\":\"ble-nus\"}\n");
+  bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":1,\"transport\":\"ble-nus\",\"hid\":true,\"liveState\":true,\"ota\":\"pending\"}\n");
+}
+
+static void sendInfo() {
+  bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":1,\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"pending\"}\n");
+}
+
+static void sendSettings() {
+  bleConfigSendText("{\"type\":\"settings\",\"analogControl\":true,\"sleepMinutes\":5}\n");
 }
 
 static void onConfigData(const uint8_t* data, size_t length) {
   if (!data || !length) return;
 
-  Serial.print("[BLE-CFG] RX: ");
-  for (size_t i = 0; i < length; ++i) Serial.write(data[i]);
-  Serial.println();
-
-  // Minimal command path for the Android companion. Keep this transport
-  // separate from HID reports so the app can configure/query the controller.
   String command;
   command.reserve(length);
   for (size_t i = 0; i < length; ++i) command += static_cast<char>(data[i]);
   command.trim();
 
+  Serial.printf("[BLE-CFG] RX: %s\n", command.c_str());
+
   if (command == "PING") {
     bleConfigSendText("PONG\n");
-  } else if (command == "INFO") {
-    bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"hid\":true,\"config\":true,\"ota\":\"pending\"}\n");
+  } else if (command == "HELLO" || command == "INFO") {
+    sendInfo();
+  } else if (command == "GET_STATE") {
+    bleConfigNotifyControllerState();
+  } else if (command == "GET_SETTINGS") {
+    sendSettings();
+  } else if (command == "SET_ANALOG") {
+    psxEnableAnalogMode();
+    bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");
+  } else if (command == "OTA_INFO") {
+    bleConfigSendText("{\"type\":\"ota\",\"supported\":false,\"state\":\"pending\"}\n");
   } else {
-    bleConfigSendText("ERR UNKNOWN_COMMAND\n");
+    bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");
   }
 }
 
@@ -74,16 +93,13 @@ void ble_init() {
   config.setButtonCount(16);
   config.setHatSwitchCount(1);
 
-  // delayAdvertising=true lets us attach the Android configuration service
-  // before advertising starts, so HID and config are visible together.
   bleGamepad.begin(&config);
   bleGamepad.beginNUS();
   bleGamepad.setNUSDataReceivedCallback(onConfigData);
   configReady = (bleGamepad.getNUS() != nullptr);
 
-  Serial.printf("[BLE] HID service: READY\n");
+  Serial.println("[BLE] HID service: READY");
   Serial.printf("[BLE] Android config service: %s\n", configReady ? "READY" : "FAILED");
-  if (configReady) sendConfigHello();
 }
 
 void ble_send_report() {
@@ -93,6 +109,7 @@ void ble_send_report() {
   if (connected != lastConnected) {
     Serial.printf("[BLE] HID %s\n", connected ? "CONNECTED" : "DISCONNECTED");
     lastConnected = connected;
+    if (connected && configReady) sendConfigHello();
   }
 
   if (!connected) return;
@@ -125,4 +142,26 @@ void bleConfigSend(const uint8_t* data, size_t length) {
 void bleConfigSendText(const char* text) {
   if (!text) return;
   bleConfigSend(reinterpret_cast<const uint8_t*>(text), strlen(text));
+}
+
+void bleConfigNotifyControllerState() {
+  if (!configReady) return;
+
+  const ControllerState& state = controllerState;
+  const bool changed = state.buttons != lastStateButtons ||
+                       state.lx != lastStateLx || state.ly != lastStateLy ||
+                       state.rx != lastStateRx || state.ry != lastStateRy;
+  if (!changed) return;
+
+  char message[160];
+  snprintf(message, sizeof(message),
+           "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u}\n",
+           static_cast<unsigned long>(state.buttons), state.lx, state.ly, state.rx, state.ry);
+  bleConfigSendText(message);
+
+  lastStateButtons = state.buttons;
+  lastStateLx = state.lx;
+  lastStateLy = state.ly;
+  lastStateRx = state.rx;
+  lastStateRy = state.ry;
 }
