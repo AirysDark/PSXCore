@@ -96,6 +96,7 @@ class BleConnectionManager(private val context: Context) {
     private val otaStatusBuffer = StringBuilder()
 
     private var isConnecting = false
+    private var serviceDiscoveryRetried = false
     private val handler = Handler(Looper.getMainLooper())
     private val timeoutRunnable = Runnable {
         if (isConnecting) {
@@ -122,6 +123,7 @@ class BleConnectionManager(private val context: Context) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     Log.d(tag, "[BLE] Connected to GATT server")
                     _connectionState.value = ConnectionState.DISCOVERING_SERVICES
+                    serviceDiscoveryRetried = false
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -135,10 +137,39 @@ class BleConnectionManager(private val context: Context) {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d(tag, "[BLE] Services discovered")
-                _connectionState.value = ConnectionState.ENABLING_NOTIFICATIONS
-                setupCharacteristics(gatt)
+                
+                // Log all services for debugging
+                Log.d(tag, "[BLE] Discovered service UUIDs:")
+                gatt.services.forEach { service ->
+                    Log.d(tag, "[BLE]   - ${service.uuid}")
+                }
+
+                val psxService = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
+                if (psxService == null && !serviceDiscoveryRetried) {
+                    Log.w(tag, "[BLE] PSXCore service not found. Retrying discovery in 1s (stale cache?)")
+                    serviceDiscoveryRetried = true
+                    handler.postDelayed({
+                        gatt.discoverServices()
+                    }, 1000)
+                    return
+                }
+
+                if (psxService != null) {
+                    _connectionState.value = ConnectionState.ENABLING_NOTIFICATIONS
+                    setupCharacteristics(gatt)
+                } else {
+                    Log.e(tag, "[BLE] PSXCore custom service MISSING after retry! UUID: ${ProtocolConstants.PSXCORE_SERVICE_UUID}")
+                    _connectionState.value = ConnectionState.COMPANION_MISSING
+                    
+                    // Still check for HID even if companion is missing
+                    val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
+                    _isGamepadServiceReady.value = hidService != null
+                    
+                    isConnecting = false
+                    handler.removeCallbacks(timeoutRunnable)
+                }
             } else {
-                Log.e(tag, "[BLE] Service discovery failed: $status")
+                Log.e(tag, "[BLE] Service discovery failed with status: $status")
                 handleError()
             }
         }
@@ -270,12 +301,6 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
-        // Log all discovered services for debugging
-        Log.d(tag, "[BLE] Discovered services:")
-        gatt.services.forEach { service ->
-            Log.d(tag, "[BLE]   - Service: ${service.uuid}")
-        }
-
         // Check for Gamepad Service
         val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
         if (hidService != null) {
@@ -305,11 +330,6 @@ class BleConnectionManager(private val context: Context) {
                 }
             }
             processNextDescriptor(gatt)
-        } else {
-            Log.e(tag, "[BLE] PSXCore custom service MISSING! UUID: ${ProtocolConstants.PSXCORE_SERVICE_UUID}")
-            _connectionState.value = ConnectionState.COMPANION_MISSING
-            isConnecting = false
-            handler.removeCallbacks(timeoutRunnable)
         }
     }
 
