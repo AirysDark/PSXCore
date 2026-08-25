@@ -11,6 +11,7 @@ static NimBLECharacteristic* otaDataChar = nullptr;
 static NimBLECharacteristic* otaStatusChar = nullptr;
 static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
+static bool gattInitializing = false;
 
 static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
 static const char* COMMAND_UUID     = "7a4f0001-0000-4f50-5358-434f52450001";
@@ -24,9 +25,7 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.command) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) {
-            rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!value.empty()) rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -34,9 +33,7 @@ class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaControl) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) {
-            rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!value.empty()) rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -44,9 +41,7 @@ class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaData) return;
         std::string value = characteristic->getValue();
-        if (!value.empty()) {
-            rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
-        }
+        if (!value.empty()) rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
 
@@ -57,33 +52,33 @@ static OtaDataCallbacks otaDataCallbacks;
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     rxCallbacks = callbacks;
 
+    if (gattReady) return true;
+    if (gattInitializing) return false;
+
     NimBLEServer* server = NimBLEDevice::getServer();
     if (!server) {
-        Serial.println("[PSX-GATT] ERROR: NimBLE server unavailable");
+        Serial.println("[PSX-GATT] NimBLE server not ready yet");
         return false;
     }
 
+    gattInitializing = true;
+
     psxService = server->createService(SERVICE_UUID);
     if (!psxService) {
+        gattInitializing = false;
         Serial.println("[PSX-GATT] ERROR: service creation failed");
         return false;
     }
 
-    commandChar = psxService->createCharacteristic(
-        COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    responseChar = psxService->createCharacteristic(
-        RESPONSE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    stateChar = psxService->createCharacteristic(
-        STATE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    otaControlChar = psxService->createCharacteristic(
-        OTA_CONTROL_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    otaDataChar = psxService->createCharacteristic(
-        OTA_DATA_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-    otaStatusChar = psxService->createCharacteristic(
-        OTA_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    commandChar = psxService->createCharacteristic(COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    responseChar = psxService->createCharacteristic(RESPONSE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    stateChar = psxService->createCharacteristic(STATE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    otaControlChar = psxService->createCharacteristic(OTA_CONTROL_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    otaDataChar = psxService->createCharacteristic(OTA_DATA_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    otaStatusChar = psxService->createCharacteristic(OTA_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
 
-    if (!commandChar || !responseChar || !stateChar ||
-        !otaControlChar || !otaDataChar || !otaStatusChar) {
+    if (!commandChar || !responseChar || !stateChar || !otaControlChar || !otaDataChar || !otaStatusChar) {
+        gattInitializing = false;
         Serial.println("[PSX-GATT] ERROR: characteristic creation failed");
         return false;
     }
@@ -98,6 +93,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     psxService->start();
     gattReady = true;
+    gattInitializing = false;
 
     Serial.println("[PSX-GATT] Custom PSXCore service READY");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
@@ -107,48 +103,17 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     return true;
 }
 
-bool psxCoreGattIsReady() {
-    return gattReady;
-}
+bool psxCoreGattIsReady() { return gattReady; }
 
-static void sendCharacteristic(
-    NimBLECharacteristic* characteristic,
-    const uint8_t* data,
-    size_t length) {
+static void sendCharacteristic(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
     characteristic->setValue(data, length);
     characteristic->notify();
 }
 
-void psxCoreGattSendResponse(const uint8_t* data, size_t length) {
-    sendCharacteristic(responseChar, data, length);
-}
-
-void psxCoreGattSendResponseText(const char* text) {
-    if (text) {
-        psxCoreGattSendResponse(
-            reinterpret_cast<const uint8_t*>(text), strlen(text));
-    }
-}
-
-void psxCoreGattSendState(const uint8_t* data, size_t length) {
-    sendCharacteristic(stateChar, data, length);
-}
-
-void psxCoreGattSendStateText(const char* text) {
-    if (text) {
-        psxCoreGattSendState(
-            reinterpret_cast<const uint8_t*>(text), strlen(text));
-    }
-}
-
-void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
-    sendCharacteristic(otaStatusChar, data, length);
-}
-
-void psxCoreGattSendOtaStatusText(const char* text) {
-    if (text) {
-        psxCoreGattSendOtaStatus(
-            reinterpret_cast<const uint8_t*>(text), strlen(text));
-    }
-}
+void psxCoreGattSendResponse(const uint8_t* data, size_t length) { sendCharacteristic(responseChar, data, length); }
+void psxCoreGattSendResponseText(const char* text) { if (text) psxCoreGattSendResponse(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
+void psxCoreGattSendState(const uint8_t* data, size_t length) { sendCharacteristic(stateChar, data, length); }
+void psxCoreGattSendStateText(const char* text) { if (text) psxCoreGattSendState(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
+void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) { sendCharacteristic(otaStatusChar, data, length); }
+void psxCoreGattSendOtaStatusText(const char* text) { if (text) psxCoreGattSendOtaStatus(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
