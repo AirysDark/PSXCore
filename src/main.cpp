@@ -91,6 +91,11 @@ static void printReadyBanner() {
   if (bootSummaryPrinted) return;
   bootSummaryPrinted = true;
 
+  // bleConfigIsReady() is the authoritative completion signal for the custom
+  // PSXCore GATT companion. Do not report FAILED while NimBLE is still
+  // asynchronously syncing and constructing the shared service.
+  Serial.println("[BOOT] Android companion   READY");
+  Serial.println("[BOOT] BLE advertising      READY");
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
   Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
@@ -201,8 +206,8 @@ void loop() {
     bleConfigNotifyControllerState();
 
     // The BLE/GATT manager initializes asynchronously. Hold back the final
-    // READY banner and RAW diagnostics until both the custom app service and
-    // advertising are actually ready, rather than claiming readiness early.
+    // READY banner and RAW diagnostics until the custom app companion is
+    // actually ready. This prevents a false FAILED status during host sync.
     if (!bootSummaryPrinted && bleConfigIsReady()) {
       printReadyBanner();
     }
