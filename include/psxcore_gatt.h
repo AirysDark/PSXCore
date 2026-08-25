@@ -4,7 +4,13 @@
 
 typedef void (*PsxCoreGattRxCallback)(const uint8_t* data, size_t length);
 
-bool psxCoreGattBegin(PsxCoreGattRxCallback callback);
+typedef struct {
+    PsxCoreGattRxCallback command;
+    PsxCoreGattRxCallback otaControl;
+    PsxCoreGattRxCallback otaData;
+} PsxCoreGattCallbacks;
+
+bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks);
 bool psxCoreGattIsReady();
 void psxCoreGattSendResponse(const uint8_t* data, size_t length);
 void psxCoreGattSendResponseText(const char* text);
