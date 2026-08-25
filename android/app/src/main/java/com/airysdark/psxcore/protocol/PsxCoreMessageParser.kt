@@ -17,68 +17,55 @@ data class OtaStatus(
     val rebooting: Boolean = false
 )
 
+/**
+ * Decoder for the shared PSXCore GATT v7 wire contract.
+ *
+ * The decoder deliberately accepts both the original Android field names and
+ * the fields emitted by the current ESP32 firmware. This keeps the companion
+ * compatible while firmware and Android are updated independently.
+ */
 class PsxCoreMessageParser {
     fun parseState(message: String, currentCount: Long, currentAnalogMode: Boolean): ControllerInputState? {
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "state") {
-                val buttons = json.optInt("buttons", 0)
-                
-                // Robust Analog Mode detection (checking all common field name variations):
-                val analogField = if (json.has("analog")) json.opt("analog") else null
-                val analogModeField = if (json.has("analogMode")) json.opt("analogMode") else null
-                val analog_modeField = if (json.has("analog_mode")) json.opt("analog_mode") else null
-                val modeField = json.optString("mode", "")
-                
-                // Only update if one of the fields is actually present in the JSON.
-                // Otherwise, preserve the current state to avoid flickering to false.
-                val hasAnalogField = json.has("analog") || json.has("analogMode") || 
-                                     json.has("analog_mode") || json.has("mode")
-                
-                val isAnalog = if (hasAnalogField) {
-                    when {
-                        analogField is Boolean -> analogField
-                        analogField is Int -> analogField != 0
-                        analogModeField is Boolean -> analogModeField
-                        analogModeField is Int -> analogModeField != 0
-                        analog_modeField is Boolean -> analog_modeField
-                        analog_modeField is Int -> analog_modeField != 0
-                        modeField.equals("ANALOG", ignoreCase = true) -> true
-                        modeField.equals("DIGITAL", ignoreCase = true) -> false
-                        else -> json.optBoolean("analog", json.optBoolean("analogMode", json.optBoolean("analog_mode", currentAnalogMode)))
-                    }
-                } else {
-                    currentAnalogMode
-                }
+            if (json.optString("type") != "state") return null
 
-                ControllerInputState(
-                    dpadUp = PsxButtonMapping.isPressed(buttons, PsxButton.UP),
-                    dpadDown = PsxButtonMapping.isPressed(buttons, PsxButton.DOWN),
-                    dpadLeft = PsxButtonMapping.isPressed(buttons, PsxButton.LEFT),
-                    dpadRight = PsxButtonMapping.isPressed(buttons, PsxButton.RIGHT),
-                    triangle = PsxButtonMapping.isPressed(buttons, PsxButton.TRIANGLE),
-                    circle = PsxButtonMapping.isPressed(buttons, PsxButton.CIRCLE),
-                    cross = PsxButtonMapping.isPressed(buttons, PsxButton.CROSS),
-                    square = PsxButtonMapping.isPressed(buttons, PsxButton.SQUARE),
-                    l1 = PsxButtonMapping.isPressed(buttons, PsxButton.L1),
-                    l2 = PsxButtonMapping.isPressed(buttons, PsxButton.L2),
-                    l3 = PsxButtonMapping.isPressed(buttons, PsxButton.L3),
-                    r1 = PsxButtonMapping.isPressed(buttons, PsxButton.R1),
-                    r2 = PsxButtonMapping.isPressed(buttons, PsxButton.R2),
-                    r3 = PsxButtonMapping.isPressed(buttons, PsxButton.R3),
-                    start = PsxButtonMapping.isPressed(buttons, PsxButton.START),
-                    select = PsxButtonMapping.isPressed(buttons, PsxButton.SELECT),
-                    analogButton = PsxButtonMapping.isPressed(buttons, PsxButton.ANALOG),
-                    analogMode = isAnalog,
-                    leftStickX = json.optInt("lx", 128),
-                    leftStickY = json.optInt("ly", 128),
-                    rightStickX = json.optInt("rx", 128),
-                    rightStickY = json.optInt("ry", 128),
-                    lastInputTimestamp = System.currentTimeMillis(),
-                    packetCount = currentCount
-                )
-            } else null
-        } catch (e: Exception) {
+            val buttons = json.optInt("buttons", 0)
+            val isAnalog = when {
+                json.has("analog") -> json.optBoolean("analog", currentAnalogMode)
+                json.has("analogMode") -> json.optBoolean("analogMode", currentAnalogMode)
+                json.has("analog_mode") -> json.optBoolean("analog_mode", currentAnalogMode)
+                json.has("mode") -> json.optString("mode").equals("ANALOG", ignoreCase = true)
+                else -> currentAnalogMode
+            }
+
+            ControllerInputState(
+                dpadUp = PsxButtonMapping.isPressed(buttons, PsxButton.UP),
+                dpadDown = PsxButtonMapping.isPressed(buttons, PsxButton.DOWN),
+                dpadLeft = PsxButtonMapping.isPressed(buttons, PsxButton.LEFT),
+                dpadRight = PsxButtonMapping.isPressed(buttons, PsxButton.RIGHT),
+                triangle = PsxButtonMapping.isPressed(buttons, PsxButton.TRIANGLE),
+                circle = PsxButtonMapping.isPressed(buttons, PsxButton.CIRCLE),
+                cross = PsxButtonMapping.isPressed(buttons, PsxButton.CROSS),
+                square = PsxButtonMapping.isPressed(buttons, PsxButton.SQUARE),
+                l1 = PsxButtonMapping.isPressed(buttons, PsxButton.L1),
+                l2 = PsxButtonMapping.isPressed(buttons, PsxButton.L2),
+                l3 = PsxButtonMapping.isPressed(buttons, PsxButton.L3),
+                r1 = PsxButtonMapping.isPressed(buttons, PsxButton.R1),
+                r2 = PsxButtonMapping.isPressed(buttons, PsxButton.R2),
+                r3 = PsxButtonMapping.isPressed(buttons, PsxButton.R3),
+                start = PsxButtonMapping.isPressed(buttons, PsxButton.START),
+                select = PsxButtonMapping.isPressed(buttons, PsxButton.SELECT),
+                analogButton = PsxButtonMapping.isPressed(buttons, PsxButton.ANALOG),
+                analogMode = isAnalog,
+                leftStickX = json.optInt("lx", 128),
+                leftStickY = json.optInt("ly", 128),
+                rightStickX = json.optInt("rx", 128),
+                rightStickY = json.optInt("ry", 128),
+                lastInputTimestamp = System.currentTimeMillis(),
+                packetCount = currentCount
+            )
+        } catch (_: Exception) {
             null
         }
     }
@@ -86,17 +73,28 @@ class PsxCoreMessageParser {
     fun parseDeviceInfo(message: String): DeviceInfo? {
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "info") {
-                DeviceInfo(
-                    firmwareVersion = json.optString("version", "Unknown"),
-                    hardwareRevision = json.optString("hardware", "Unknown"),
-                    deviceName = json.optString("device", json.optString("name", "PSXCore")),
-                    buildDate = json.optString("build", "Unknown"),
-                    protocolVersion = json.optInt("protocol", 0),
-                    otaSupport = json.optBoolean("ota", false)
-                )
-            } else null
-        } catch (e: Exception) {
+            if (json.optString("type") != "info") return null
+
+            val otaSupported = when {
+                json.has("otaSupported") -> json.optBoolean("otaSupported", false)
+                json.has("ota") && json.opt("ota") is Boolean -> json.optBoolean("ota", false)
+                json.has("ota") -> json.optString("ota").isNotBlank() &&
+                    !json.optString("ota").equals("false", ignoreCase = true)
+                else -> false
+            }
+
+            DeviceInfo(
+                firmwareVersion = json.optString("version", "Unknown"),
+                hardwareRevision = json.optString(
+                    "hardware",
+                    if (json.optString("transport") == "shared-gatt") "ESP32-S3" else "Unknown"
+                ),
+                deviceName = json.optString("device", json.optString("name", "PSXCore")),
+                buildDate = json.optString("build", "Unknown"),
+                protocolVersion = json.optInt("protocol", 0),
+                otaSupport = otaSupported
+            )
+        } catch (_: Exception) {
             null
         }
     }
@@ -104,16 +102,26 @@ class PsxCoreMessageParser {
     fun parseDeviceSettings(message: String): DeviceSettings? {
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "settings") {
-                DeviceSettings(
-                    controllerName = json.optString("name", "PSXCore Controller"),
-                    sleepTimeoutMinutes = json.optInt("sleep", 5),
-                    analogModeBehavior = json.optInt("analog_behavior", 0),
-                    inactivityTimeoutMinutes = json.optInt("inactivity", 5),
-                    autoReconnect = json.optBoolean("auto_reconnect", true)
-                )
-            } else null
-        } catch (e: Exception) {
+            if (json.optString("type") != "settings") return null
+
+            val sleep = when {
+                json.has("sleep") -> json.optInt("sleep", 5)
+                json.has("sleepMinutes") -> json.optInt("sleepMinutes", 5)
+                else -> 5
+            }
+
+            DeviceSettings(
+                controllerName = json.optString("name", "PSXCore Controller"),
+                sleepTimeoutMinutes = sleep,
+                analogModeBehavior = when {
+                    json.has("analog_behavior") -> json.optInt("analog_behavior", 0)
+                    json.optBoolean("analogControl", false) -> 1
+                    else -> 0
+                },
+                inactivityTimeoutMinutes = json.optInt("inactivity", sleep),
+                autoReconnect = json.optBoolean("auto_reconnect", true)
+            )
+        } catch (_: Exception) {
             null
         }
     }
@@ -132,7 +140,7 @@ class PsxCoreMessageParser {
                     rebooting = json.optBoolean("rebooting", false)
                 )
             } else null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -141,10 +149,12 @@ class PsxCoreMessageParser {
         if (message == "OTA_READY") return 180
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "ota" && (json.optString("state") == "ready" || json.optString("state") == "receiving")) {
+            if (json.optString("type") == "ota" &&
+                (json.optString("state") == "ready" || json.optString("state") == "receiving")
+            ) {
                 json.optInt("chunk_size", 180)
             } else null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -154,7 +164,7 @@ class PsxCoreMessageParser {
         return try {
             val json = JSONObject(message)
             json.optString("type") == "ota" && json.optString("state") == "success"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -166,7 +176,7 @@ class PsxCoreMessageParser {
             if (json.optString("type") == "ota" && json.optString("state") == "error") {
                 json.optString("error", "Unknown OTA error")
             } else null
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
