@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <BleGamepad.h>
+#include <Update.h>
+#include <esp_partition.h>
 #include "controller_state.h"
 #include "debug_status.h"
 #include "ble_gamepad.h"
@@ -15,16 +17,69 @@ static uint8_t lastStateLy = 0xFF;
 static uint8_t lastStateRx = 0xFF;
 static uint8_t lastStateRy = 0xFF;
 
+// OTA foundation. Transfer/write commands are added in Parts 2-4.
+enum class OtaState : uint8_t {
+  Idle,
+  Ready,
+  Receiving,
+  Success,
+  Error
+};
+
+static OtaState otaState = OtaState::Idle;
+static size_t otaExpectedSize = 0;
+static size_t otaReceivedSize = 0;
+static uint8_t otaProgress = 0;
+static esp_err_t otaLastError = ESP_OK;
+
+static const char* otaStateName(OtaState state) {
+  switch (state) {
+    case OtaState::Idle:      return "idle";
+    case OtaState::Ready:     return "ready";
+    case OtaState::Receiving: return "receiving";
+    case OtaState::Success:   return "success";
+    case OtaState::Error:     return "error";
+    default:                  return "unknown";
+  }
+}
+
+static size_t otaAvailableSpace() {
+  const esp_partition_t* nextPartition = esp_ota_get_next_update_partition(nullptr);
+  return nextPartition ? nextPartition->size : 0;
+}
+
+static void resetOtaState() {
+  otaState = OtaState::Idle;
+  otaExpectedSize = 0;
+  otaReceivedSize = 0;
+  otaProgress = 0;
+  otaLastError = ESP_OK;
+}
+
+static void sendOtaInfo() {
+  char message[256];
+  snprintf(message, sizeof(message),
+           "{\"type\":\"ota\",\"supported\":true,\"state\":\"%s\",\"expectedSize\":%lu,\"receivedSize\":%lu,\"progress\":%u,\"availableSpace\":%lu,\"updateInProgress\":%s,\"error\":%d}\n",
+           otaStateName(otaState),
+           static_cast<unsigned long>(otaExpectedSize),
+           static_cast<unsigned long>(otaReceivedSize),
+           otaProgress,
+           static_cast<unsigned long>(otaAvailableSpace()),
+           Update.isRunning() ? "true" : "false",
+           static_cast<int>(otaLastError));
+  bleConfigSendText(message);
+}
+
 static int16_t psxAxisToHid(uint8_t value) {
   return static_cast<int16_t>((static_cast<uint32_t>(value) * 32767U + 127U) / 255U);
 }
 
 static void sendConfigHello() {
-  bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":1,\"transport\":\"ble-nus\",\"hid\":true,\"liveState\":true,\"ota\":\"pending\"}\n");
+  bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":1,\"transport\":\"ble-nus\",\"hid\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");
 }
 
 static void sendInfo() {
-  bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":1,\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"pending\"}\n");
+  bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":1,\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");
 }
 
 static void sendSettings() {
@@ -53,7 +108,11 @@ static void onConfigData(const uint8_t* data, size_t length) {
     psxEnableAnalogMode();
     bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");
   } else if (command == "OTA_INFO") {
-    bleConfigSendText("{\"type\":\"ota\",\"supported\":false,\"state\":\"pending\"}\n");
+    sendOtaInfo();
+  } else if (command == "OTA_RESET") {
+    if (Update.isRunning()) Update.abort();
+    resetOtaState();
+    sendOtaInfo();
   } else {
     bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");
   }
@@ -93,6 +152,7 @@ void ble_init() {
   config.setButtonCount(16);
   config.setHatSwitchCount(1);
 
+  resetOtaState();
   bleGamepad.begin(&config);
   bleGamepad.beginNUS();
   bleGamepad.setNUSDataReceivedCallback(onConfigData);
@@ -100,6 +160,9 @@ void ble_init() {
 
   Serial.println("[BLE] HID service: READY");
   Serial.printf("[BLE] Android config service: %s\n", configReady ? "READY" : "FAILED");
+  Serial.printf("[OTA] Foundation: %s, next slot space=%lu bytes\n",
+                configReady ? "READY" : "WAITING",
+                static_cast<unsigned long>(otaAvailableSpace()));
 }
 
 void ble_send_report() {
