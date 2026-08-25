@@ -4,6 +4,8 @@
 #include <string>
 
 #include "psxcore_gatt.h"
+#include "controller_state.h"
+#include "psx_analog_mode.h"
 
 static NimBLEService* psxService = nullptr;
 static NimBLECharacteristic* commandChar = nullptr;
@@ -131,7 +133,7 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     Serial.println("[PSX-GATT] Service registered successfully");
     Serial.println("[PSX-GATT] GATT CONTRACT: Android + firmware UUIDs synchronized");
-    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED + RETRY ON DELIVERY FAILURE");
+    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED + NEWLINE FRAMED");
     return true;
 }
 
@@ -166,10 +168,6 @@ static void enqueueTextFrame(std::deque<std::string>& queue, const char* text, b
 static bool sendNextFrame(NimBLECharacteristic* characteristic, std::deque<std::string>& queue, const char* label) {
     if (!gattReady || !characteristic || queue.empty()) return false;
 
-    // Do not remove the frame until NimBLE confirms that the notification was
-    // accepted. The previous implementation popped first, so a notification
-    // failure silently lost GET_STATE and other messages while still printing
-    // a misleading TX line.
     const std::string& frame = queue.front();
     characteristic->setValue(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
 
@@ -216,4 +214,35 @@ void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
 
 void psxCoreGattSendOtaStatusText(const char* text) {
     enqueueTextFrame(otaQueue, text, false);
+}
+
+void bleConfigNotifyControllerState(bool force) {
+    (void)force;
+    char message[192];
+    snprintf(
+        message,
+        sizeof(message),
+        "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u,\"analog\":%s}",
+        (unsigned long)controllerState.buttons,
+        (unsigned)controllerState.lx,
+        (unsigned)controllerState.ly,
+        (unsigned)controllerState.rx,
+        (unsigned)controllerState.ry,
+        psxIsAnalogMode() ? "true" : "false"
+    );
+    psxCoreGattSendStateText(message);
+}
+
+void bleConfigSendText(const char* text) {
+    // This is the single compatibility path used by ble_nimble.cpp. Always use
+    // the text helper so every logical response is newline terminated before it
+    // enters the notification queue.
+    psxCoreGattSendResponseText(text);
+
+    // SET_ANALOG changes UI-visible controller state. Queue a separate state
+    // frame after the result so Android updates Analog Mode from the state
+    // characteristic instead of trying to infer it from a fragmented response.
+    if (text && strstr(text, "\"command\":\"SET_ANALOG\"") != nullptr) {
+        bleConfigNotifyControllerState(true);
+    }
 }
