@@ -53,31 +53,59 @@ static void handleCommand(const uint8_t* data,size_t length){if(!data||!length)r
 static void handleOtaControl(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="OTA_INFO")sendOtaInfo();else if(command.startsWith("OTA_BEGIN:")){String s=command.substring(strlen("OTA_BEGIN:"));s.trim();char* end=nullptr;unsigned long v=strtoul(s.c_str(),&end,10);if(!s.length()||end==s.c_str()||*end!='\0')abortOta("invalid_begin_command");else beginOta((size_t)v);}else if(command=="OTA_END")finishOta();else if(command=="OTA_RESET"){if(Update.isRunning())Update.abort();resetOtaState();sendOtaInfo();}else sendOtaText("{\"type\":\"ota\",\"state\":\"error\",\"reason\":\"unknown_control_command\"}\n");}
 static void handleOtaData(const uint8_t* data,size_t length){if(data&&length)writeOtaChunk(data,length);}
 
+static bool nimbleHostReady(){
+  NimBLEServer* server=NimBLEDevice::getServer();
+  return server!=nullptr;
+}
+
 static void configureSharedAdvertising(){
-  NimBLEDevice::setDeviceName(BLE_DEVICE_NAME);
+  if(!nimbleHostReady()){
+    advertisingConfigured=false;
+    Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST");
+    return;
+  }
   NimBLEAdvertising* advertising=NimBLEDevice::getAdvertising();
-  if(!advertising){Serial.println("[BLE] Advertising ERROR: object unavailable");return;}
+  if(!advertising){
+    advertisingConfigured=false;
+    Serial.println("[BLE] Advertising ERROR: object unavailable");
+    return;
+  }
   if(advertising->isAdvertising()) advertising->stop();
   advertising->reset();
-  advertising->setName(BLE_DEVICE_NAME);
+
+  // Keep the primary advertising packet deliberately small.
+  // The custom PSXCore GATT service remains discoverable after connection.
+  NimBLEAdvertisementData advertisingData;
+  advertisingData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+  advertisingData.addServiceUUID(HID_SERVICE_UUID);
+  advertising->setAdvertisementData(advertisingData);
+
+  // Put the full device name in the scan response so we do not exceed
+  // the 31-byte primary advertising payload.
+  NimBLEAdvertisementData scanResponseData;
+  scanResponseData.setName(BLE_DEVICE_NAME);
+  advertising->setScanResponseData(scanResponseData);
+
   advertising->setAppearance(0x03C4);
-  advertising->addServiceUUID(HID_SERVICE_UUID);
-  // This NimBLE-Arduino version has no setScanResponse(bool) API.
-  // Keep advertising data compatible with the installed library.
   advertisingConfigured=true;
   bool started=advertising->start();
   delay(50);
-  Serial.printf("[BLE] Shared advertising: %s\n",(started&&advertising->isAdvertising())?"ON":"FAILED");
-  if(advertising->isAdvertising()){
+  bool active=started&&advertising->isAdvertising();
+  Serial.printf("[BLE] Shared advertising: %s\n",active?"ON":"FAILED");
+  if(active){
     Serial.printf("[BLE] DISCOVERABLE NAME: %s\n",BLE_DEVICE_NAME);
     Serial.println("[BLE] ONE DEVICE: HID gamepad + PSXCore custom GATT");
   }
 }
 
 static void ensureAdvertising(){
-  if(!advertisingConfigured)return;
+  if(!nimbleHostReady()) return;
   NimBLEAdvertising* advertising=NimBLEDevice::getAdvertising();
-  if(!advertising)return;
+  if(!advertising) return;
+  if(!advertisingConfigured){
+    configureSharedAdvertising();
+    return;
+  }
   if(!advertising->isAdvertising()){
     bool started=advertising->start();
     Serial.printf("[BLE] Advertising restart: %s\n",(started&&advertising->isAdvertising())?"OK":"FAILED");
@@ -112,13 +140,12 @@ void ble_init(){
   NimBLEDevice::setDeviceName(BLE_DEVICE_NAME);
   Serial.println("[BLE] HID service: READY");
   Serial.println("[BLE] Shared BLE server architecture: HID + custom PSXCore GATT");
-  tryInitPsxCoreGatt();
-  configureSharedAdvertising();
+  Serial.println("[BLE] Waiting for NimBLE host sync before advertising");
 }
 
 void ble_send_report(){
   if(!configReady && configInitPending && (uint32_t)(millis()-lastConfigInitAttempt)>=250){lastConfigInitAttempt=millis();tryInitPsxCoreGatt();}
-  if((uint32_t)(millis()-lastAdvertisingCheck)>=1000){lastAdvertisingCheck=millis();ensureAdvertising();}
+  if((uint32_t)(millis()-lastAdvertisingCheck)>=500){lastAdvertisingCheck=millis();ensureAdvertising();}
   if(otaState==OtaState::Success && otaCompletedAt && (uint32_t)(millis()-otaCompletedAt)>=1500){Serial.println("[OTA] RESTART NOW");delay(50);ESP.restart();return;}
   bool connected=bleGamepad.isConnected();
   debugStatusBLEState(connected);
