@@ -29,7 +29,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val bleScanner = BleScanner(bluetoothManager.adapter)
     
     val bleConnectionManager = BleConnectionManager(application)
-    val updateManager = UpdateManager()
+    val updateManager = UpdateManager(application, bleConnectionManager)
 
     val lastDeviceAddress: StateFlow<String?> = settingsRepository.lastDeviceAddress
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -119,9 +119,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         bleConnectionManager.sendCommand(ProtocolConstants.CMD_OTA_INFO)
     }
 
-    fun onFileSelected(uri: Uri, name: String, size: Long) {
+    fun startOtaUpdate() {
         viewModelScope.launch {
-            updateManager.selectFile(uri, name, size)
+            updateManager.startUpdate()
+        }
+    }
+
+    fun onFileSelected(uri: Uri, name: String, size: Long) {
+        val context = getApplication<Application>()
+        var fileName = name
+        var fileSize = size
+
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                if (nameIndex != -1) fileName = cursor.getString(nameIndex)
+                if (sizeIndex != -1) fileSize = cursor.getLong(sizeIndex)
+            }
+        }
+
+        viewModelScope.launch {
+            updateManager.selectFile(uri, fileName, fileSize)
         }
     }
 }

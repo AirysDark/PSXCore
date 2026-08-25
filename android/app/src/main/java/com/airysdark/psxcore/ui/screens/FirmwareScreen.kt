@@ -102,12 +102,26 @@ fun FirmwareScreen(viewModel: MainViewModel) {
             UpdateProgressCard(updateState, progress)
         }
 
+        if (updateState == UpdateState.COMPLETE) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
+            ) {
+                Text(
+                    "Update Successful! Controller is rebooting.",
+                    modifier = Modifier.padding(16.dp),
+                    color = Color(0xFF2E7D32),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         Button(
             onClick = { 
                 Log.d("PSXCore", "Button clicked: Start Update")
-                viewModel.updateManager.startUpdate() 
+                viewModel.startOtaUpdate()
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = updateState == UpdateState.FILE_SELECTED && connectionState == ConnectionState.READY,

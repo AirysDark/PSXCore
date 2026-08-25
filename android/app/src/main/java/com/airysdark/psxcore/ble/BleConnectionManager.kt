@@ -193,8 +193,10 @@ class BleConnectionManager(private val context: Context) {
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 Log.d(tag, "[BLE] Write successful")
+                pendingWrite?.complete(status)
             } else {
                 Log.e(tag, "[BLE] Write failed: $status")
+                pendingWrite?.completeExceptionally(RuntimeException("GATT Write failed: $status"))
             }
         }
     }
@@ -333,6 +335,31 @@ class BleConnectionManager(private val context: Context) {
         val data = command.toByteArray(StandardCharsets.UTF_8)
         
         return writeCharacteristicCompat(gatt, rx, data)
+    }
+
+    @SuppressLint("MissingPermission")
+    suspend fun sendBinaryChunk(data: ByteArray): Boolean {
+        val rx = rxCharacteristic ?: return false
+        val gatt = bluetoothGatt ?: return false
+        
+        pendingWrite = CompletableDeferred()
+        val success = writeCharacteristicCompat(gatt, rx, data)
+        
+        if (!success) {
+            pendingWrite = null
+            return false
+        }
+        
+        return try {
+            withTimeoutOrNull(5000) {
+                pendingWrite?.await()
+                true
+            } ?: false
+        } catch (e: Exception) {
+            false
+        } finally {
+            pendingWrite = null
+        }
     }
 
     @SuppressLint("MissingPermission")

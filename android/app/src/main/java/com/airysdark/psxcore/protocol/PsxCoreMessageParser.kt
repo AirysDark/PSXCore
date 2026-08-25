@@ -78,4 +78,35 @@ class PsxCoreMessageParser {
             null
         }
     }
+
+    fun parseOtaReady(message: String): Int? {
+        return try {
+            val json = JSONObject(message)
+            if (json.optString("type") == "ota_ready") {
+                json.optInt("chunk_size", 180)
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun parseOtaSuccess(message: String): Boolean {
+        return try {
+            val json = JSONObject(message)
+            json.optString("type") == "ota_success"
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun parseOtaError(message: String): String? {
+        return try {
+            val json = JSONObject(message)
+            if (json.optString("type") == "ota_error") {
+                json.optString("message", "Unknown OTA error")
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
 }
