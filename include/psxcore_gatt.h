@@ -17,6 +17,10 @@ bool psxCoreGattIsReady();
 // HID and PSXCore GATT remain services on the same physical BLE device.
 bool psxCoreGattRefreshAdvertising();
 
+// Queue outgoing notifications. Frames are copied and emitted serially by
+// psxCoreGattProcess() so a later setValue() cannot overwrite an earlier frame.
+void psxCoreGattProcess();
+
 void psxCoreGattSendResponse(const uint8_t* data, size_t length);
 void psxCoreGattSendResponseText(const char* text);
 void psxCoreGattSendState(const uint8_t* data, size_t length);
