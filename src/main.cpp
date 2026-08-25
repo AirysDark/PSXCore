@@ -11,6 +11,7 @@
 #include "psx_analog_mode.h"
 #include "ble_gamepad.h"
 #include "psx_config.h"
+#include "analog_button.h"
 #include "sd_update.h"
 #include "debug_status.h"
 
@@ -52,6 +53,26 @@ static bool testPsram() {
 #endif
 }
 
+static void handleAnalogButtonEvent() {
+  switch (analogButtonTakeEvent()) {
+    case AnalogButtonEvent::ShortPress:
+      Serial.printf("[ANALOG] Short press: %s mode\n",
+                    analogButtonIsAnalogMode() ? "ANALOG" : "DIGITAL");
+      // Future hook: if the system is sleeping, this event can request wake.
+      // Future hook: this event can start BLE discovery/advertising.
+      break;
+
+    case AnalogButtonEvent::LongPress:
+      // Reserved for future controllers/hardware that expose ANALOG as a
+      // continuously-held signal. Standard PS2 protocol does not provide one.
+      Serial.println("[ANALOG] Long press event");
+      break;
+
+    default:
+      break;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -90,6 +111,7 @@ void setup() {
 
   if (psxReady) {
     Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
+    analogButtonInit(controllerId);
   } else {
     Serial.println("[BOOT] PSX controller      NO RESPONSE");
     Serial.println("[BOOT] Starting pin sweep recovery...");
@@ -101,6 +123,7 @@ void setup() {
 
       if (psxReady) {
         Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
+        analogButtonInit(controllerId);
       } else {
         Serial.println("[BOOT] PSX controller      RESPONSE NOT CONFIRMED");
       }
@@ -111,10 +134,10 @@ void setup() {
 
   if (psxReady) {
     Serial.println("[BOOT] PSX input           ENABLED");
-    bootMark("PSX analog config", psx_enable_analog_mode());
+    Serial.println("[BOOT] ANALOG button       ENABLED (controller-controlled mode toggle)");
   } else {
     Serial.println("[BOOT] PSX input           SEARCHING");
-    Serial.println("[BOOT] PSX analog config   SKIPPED (no controller)");
+    Serial.println("[BOOT] ANALOG button       WAITING FOR CONTROLLER");
   }
 
   Serial.println("[BOOT] Starting Bluetooth HID...");
@@ -136,6 +159,7 @@ void loop() {
 
   if (psxReady) {
     psxReadController();
+    handleAnalogButtonEvent();
   }
 
   bleGamepadUpdate();
