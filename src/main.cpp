@@ -202,8 +202,10 @@ void loop() {
   }
 
   if (!powerManagerIsSleeping()) {
+    // bleGamepadUpdate() owns both HID reporting and the rate-limited,
+    // change-detected Android live-state notification. Do not notify again
+    // here or the same state can be pushed twice per loop iteration.
     bleGamepadUpdate();
-    bleConfigNotifyControllerState();
 
     // The BLE/GATT manager initializes asynchronously. Hold back the final
     // READY banner and RAW diagnostics until the custom app companion is
