@@ -118,7 +118,10 @@ fun ScanDialog(
     val isScanning by viewModel.bleScanner.isScanning.collectAsState()
 
     LaunchedEffect(Unit) {
-        viewModel.startScan(com.airysdark.psxcore.protocol.ProtocolConstants.PSXCORE_SERVICE_UUID)
+        viewModel.startScan(
+            serviceUuid = com.airysdark.psxcore.protocol.ProtocolConstants.PSXCORE_SERVICE_UUID,
+            name = "PSXCore"
+        )
     }
 
     AlertDialog(

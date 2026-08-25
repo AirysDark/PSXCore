@@ -46,12 +46,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isCompanionServiceReady = bleConnectionManager.isCompanionServiceReady
     val isOtaReadyStatus = bleConnectionManager.isOtaReadyStatus
 
-    fun startScan(serviceUuid: java.util.UUID? = null) {
+    fun startScan(serviceUuid: java.util.UUID? = null, name: String? = null) {
         if (!hasScanPermission()) {
             Toast.makeText(getApplication(), "Bluetooth scan permission required", Toast.LENGTH_SHORT).show()
             return
         }
-        bleScanner.startScan(serviceUuid)
+        bleScanner.startScan(serviceUuid, name)
     }
 
     fun stopScan() {
