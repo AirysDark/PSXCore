@@ -12,6 +12,11 @@ typedef struct {
 
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks);
 bool psxCoreGattIsReady();
+
+// Refresh BLE advertising after the custom PSXCore service is registered.
+// HID and PSXCore GATT remain services on the same physical BLE device.
+bool psxCoreGattRefreshAdvertising();
+
 void psxCoreGattSendResponse(const uint8_t* data, size_t length);
 void psxCoreGattSendResponseText(const char* text);
 void psxCoreGattSendState(const uint8_t* data, size_t length);
