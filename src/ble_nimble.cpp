@@ -152,7 +152,7 @@ static void handleCommand(const uint8_t* data, size_t length) {
     command.trim();
     if (command == "PING") bleConfigSendText("PONG\n");
     else if (command == "HELLO" || command == "INFO") sendInfo();
-    else if (command == "GET_STATE") bleConfigNotifyControllerState();
+    else if (command == "GET_STATE") bleConfigNotifyControllerState(true);
     else if (command == "GET_SETTINGS") sendSettings();
     else if (command == "SET_ANALOG") {
         psxEnableAnalogMode();
@@ -189,11 +189,7 @@ static void configureSharedAdvertising() {
     if (!nimbleHostReady()) { advertisingConfigured = false; Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST"); return; }
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     if (!advertising) { advertisingConfigured = false; Serial.println("[BLE] Advertising ERROR: object unavailable"); return; }
-
-    // Priority 2: never reset or restart advertising while the shared BLE
-    // connection is active. Inactive advertising during a connection is normal.
     if (hasActiveBleClient()) { advertisingConfigured = true; return; }
-
     if (advertising->isAdvertising()) advertising->stop();
     advertising->reset();
 
@@ -205,7 +201,6 @@ static void configureSharedAdvertising() {
     NimBLEAdvertisementData scanResponseData;
     scanResponseData.setName(BLE_DEVICE_NAME);
     advertising->setScanResponseData(scanResponseData);
-
     advertising->setAppearance(0x03C4);
     advertisingConfigured = true;
     bool started = advertising->start();
@@ -223,14 +218,9 @@ static void ensureAdvertising() {
     if (!nimbleHostReady()) return;
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     if (!advertising) return;
-
-    // Priority 2 fix: the peripheral stops advertising while connected. Do not
-    // mistake that normal state for a failure and repeatedly call start().
     if (hasActiveBleClient()) return;
-
     if (!advertisingConfigured) { configureSharedAdvertising(); return; }
     if (advertising->isAdvertising()) return;
-
     bool started = advertising->start();
     Serial.printf("[BLE] Advertising restart: %s\n", (started && advertising->isAdvertising()) ? "OK" : "FAILED");
 }
@@ -278,6 +268,9 @@ void ble_send_report() {
     if ((uint32_t)(millis() - lastAdvertisingCheck) >= 500) { lastAdvertisingCheck = millis(); ensureAdvertising(); }
     if (otaState == OtaState::Success && otaCompletedAt && (uint32_t)(millis() - otaCompletedAt) >= 1500) { Serial.println("[OTA] RESTART NOW"); delay(50); ESP.restart(); return; }
 
+    // Drain exactly one queued companion notification per loop pass.
+    psxCoreGattProcess();
+
     bool connected = bleGamepad.isConnected();
     debugStatusBLEState(connected);
     if (connected != lastConnected) {
@@ -302,11 +295,11 @@ bool bleConfigIsReady() { return configReady && psxCoreGattIsReady(); }
 void bleConfigSend(const uint8_t* d, size_t l) { if (configReady && d && l) psxCoreGattSendResponse(d, l); }
 void bleConfigSendText(const char* t) { if (t) bleConfigSend(reinterpret_cast<const uint8_t*>(t), strlen(t)); }
 
-void bleConfigNotifyControllerState() {
+void bleConfigNotifyControllerState(bool force) {
     if (!configReady) return;
     const ControllerState& s = controllerState;
     bool changed = s.buttons != lastStateButtons || s.lx != lastStateLx || s.ly != lastStateLy || s.rx != lastStateRx || s.ry != lastStateRy;
-    if (!changed) return;
+    if (!force && !changed) return;
     char m[160];
     snprintf(m, sizeof(m), "{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u}\n", (unsigned long)s.buttons, s.lx, s.ly, s.rx, s.ry);
     psxCoreGattSendStateText(m);
