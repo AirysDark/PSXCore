@@ -131,9 +131,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
 bool psxCoreGattIsReady() { return gattReady; }
 
-// One logical frame per notification. Do not manually split a frame into
-// multiple notifications: BLE notifications are not a reliable record stream,
-// so losing or reordering one transport chunk corrupts the whole JSON frame.
 static void sendCharacteristic(
     NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
@@ -141,22 +138,25 @@ static void sendCharacteristic(
     characteristic->notify();
 }
 
-// RESPONSE, STATE and OTA_STATUS are newline-framed text streams on Android.
-// Enforce exactly one terminating delimiter for every logical message before
-// sending it as one notification. Android keeps a persistent buffer and only
-// parses complete frames ending in '\n'.
-static void sendDataFrame(
-    NimBLECharacteristic* characteristic,
-    const uint8_t* data,
-    size_t length) {
-    if (!data || !length) return;
+static void sendTextFrame(NimBLECharacteristic* characteristic, const char* text) {
+    if (!text) return;
 
-    if (data[length - 1] == '\n') {
-        sendCharacteristic(characteristic, data, length);
+    const size_t length = strlen(text);
+    if (!length) return;
+
+    // The Android companion treats RESPONSE, STATE and OTA_STATUS as framed
+    // streams. Always terminate text messages so back-to-back BLE notifications
+    // cannot be merged into one unparseable message.
+    if (text[length - 1] == '\n') {
+        sendCharacteristic(
+            characteristic,
+            reinterpret_cast<const uint8_t*>(text),
+            length
+        );
         return;
     }
 
-    std::string framed(reinterpret_cast<const char*>(data), length);
+    std::string framed(text, length);
     framed.push_back('\n');
     sendCharacteristic(
         characteristic,
@@ -165,17 +165,8 @@ static void sendDataFrame(
     );
 }
 
-static void sendTextFrame(NimBLECharacteristic* characteristic, const char* text) {
-    if (!text) return;
-    sendDataFrame(
-        characteristic,
-        reinterpret_cast<const uint8_t*>(text),
-        strlen(text)
-    );
-}
-
 void psxCoreGattSendResponse(const uint8_t* data, size_t length) {
-    sendDataFrame(responseChar, data, length);
+    sendCharacteristic(responseChar, data, length);
 }
 
 void psxCoreGattSendResponseText(const char* text) {
@@ -183,7 +174,7 @@ void psxCoreGattSendResponseText(const char* text) {
 }
 
 void psxCoreGattSendState(const uint8_t* data, size_t length) {
-    sendDataFrame(stateChar, data, length);
+    sendCharacteristic(stateChar, data, length);
 }
 
 void psxCoreGattSendStateText(const char* text) {
@@ -191,7 +182,7 @@ void psxCoreGattSendStateText(const char* text) {
 }
 
 void psxCoreGattSendOtaStatus(const uint8_t* data, size_t length) {
-    sendDataFrame(otaStatusChar, data, length);
+    sendCharacteristic(otaStatusChar, data, length);
 }
 
 void psxCoreGattSendOtaStatusText(const char* text) {

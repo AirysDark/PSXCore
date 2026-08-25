@@ -4,27 +4,27 @@ import java.util.UUID
 
 object ProtocolConstants {
     /**
-     * PSXCore Custom GATT BLE Service Contract (v7)
+     * PSXCore Custom GATT BLE Service Contract (v6)
      */
-
+    
     // Service UUID
     val PSXCORE_SERVICE_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450001")
-
+    
     // 1. COMMAND - Android -> ESP32 (WRITE, WRITE_NO_RESPONSE)
     val PSX_COMMAND_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450002")
-
+    
     // 2. RESPONSE - ESP32 -> Android (NOTIFY)
     val PSX_RESPONSE_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450003")
-
+    
     // 3. CONTROLLER_STATE - ESP32 -> Android (NOTIFY)
     val PSX_CONTROLLER_STATE_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450004")
-
+    
     // 4. OTA CONTROL - Android -> ESP32 (WRITE, WRITE_NO_RESPONSE)
     val PSX_OTA_CONTROL_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450005")
-
+    
     // 5. OTA DATA - Android -> ESP32 (WRITE_NO_RESPONSE)
     val PSX_OTA_DATA_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450006")
-
+    
     // 6. OTA STATUS - ESP32 -> Android (NOTIFY)
     val PSX_OTA_STATUS_UUID: UUID = UUID.fromString("7a4f0000-0000-4f50-5358-434f52450007")
 
@@ -33,7 +33,7 @@ object ProtocolConstants {
 
     // Standard Bluetooth Descriptor for Notifications
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
+    
     // Commands
     const val CMD_PING = "PING"
     const val CMD_INFO = "INFO"
