@@ -55,12 +55,13 @@ static void tryInitPsxCoreGatt(){
     configInitPending=false;
     Serial.println("[BLE] PSXCore custom GATT: READY");
     Serial.printf("[OTA] Custom GATT OTA: READY, next slot=%lu bytes\n",(unsigned long)otaAvailableSpace());
+    psxCoreGattRefreshAdvertising();
   }
 }
 
 static void updatePsxButtons(uint32_t b){static const struct{uint8_t psxBit;uint8_t hidButton;}m[]={{15,BUTTON_1},{14,BUTTON_2},{13,BUTTON_3},{12,BUTTON_4},{10,BUTTON_5},{11,BUTTON_6},{8,BUTTON_7},{9,BUTTON_8},{1,BUTTON_9},{2,BUTTON_10},{0,BUTTON_11},{3,BUTTON_12}};for(const auto&e:m){if(b&(1UL<<e.psxBit))bleGamepad.press(e.hidButton);else bleGamepad.release(e.hidButton);}bool u=b&(1UL<<4),r=b&(1UL<<5),d=b&(1UL<<6),l=b&(1UL<<7);if(u&&r)bleGamepad.setHat1(HAT_UP_RIGHT);else if(r&&d)bleGamepad.setHat1(HAT_DOWN_RIGHT);else if(d&&l)bleGamepad.setHat1(HAT_DOWN_LEFT);else if(l&&u)bleGamepad.setHat1(HAT_UP_LEFT);else if(u)bleGamepad.setHat1(HAT_UP);else if(r)bleGamepad.setHat1(HAT_RIGHT);else if(d)bleGamepad.setHat1(HAT_DOWN);else if(l)bleGamepad.setHat1(HAT_LEFT);else bleGamepad.setHat1(HAT_CENTERED);}
 
-void ble_init(){BleGamepadConfiguration c;c.setAutoReport(false);c.setButtonCount(16);c.setHatSwitchCount(1);resetOtaState();configReady=false;configInitPending=true;bleGamepad.begin(&c);Serial.println("[BLE] HID service: READY");Serial.println("[BLE] PSXCore custom GATT: WAITING FOR NIMBLE SERVER");tryInitPsxCoreGatt();}
+void ble_init(){BleGamepadConfiguration c;c.setAutoReport(false);c.setButtonCount(16);c.setHatSwitchCount(1);resetOtaState();configReady=false;configInitPending=true;lastConfigInitAttempt=0;bleGamepad.begin(&c);Serial.println("[BLE] HID service: READY");Serial.println("[BLE] PSXCore custom GATT: WAITING FOR NIMBLE SERVER");tryInitPsxCoreGatt();}
 void ble_send_report(){
   if(!configReady && configInitPending && (uint32_t)(millis()-lastConfigInitAttempt)>=250){lastConfigInitAttempt=millis();tryInitPsxCoreGatt();}
   if(otaState==OtaState::Success && otaCompletedAt && (uint32_t)(millis()-otaCompletedAt)>=1500){Serial.println("[OTA] RESTART NOW");delay(50);ESP.restart();return;}
