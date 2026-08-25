@@ -142,14 +142,33 @@ bool psxCoreGattIsReady() { return gattReady; }
 
 static void enqueueFrame(std::deque<PendingFrame>& queue, const uint8_t* data, size_t length, bool replaceLatest) {
     if (!gattReady || !data || !length) return;
+
     PendingFrame frame;
     frame.data.assign(reinterpret_cast<const char*>(data), length);
     frame.offset = 0;
+
     if (replaceLatest) {
-        if (queue.empty()) queue.push_back(std::move(frame));
-        else queue.back() = std::move(frame);
+        // Never replace a frame that is already being transmitted. Replacing
+        // queue.back() unconditionally used to reset offset to zero when the
+        // queue contained only the in-flight state frame, causing repeated
+        // prefixes such as 20/73 -> 40/73 -> 20/73 and corrupt JSON on Android.
+        // Keep at most one in-flight frame plus one newest pending state.
+        if (queue.empty()) {
+            queue.push_back(std::move(frame));
+        } else if (queue.front().offset > 0) {
+            if (queue.size() == 1) {
+                queue.push_back(std::move(frame));
+            } else {
+                queue.back() = std::move(frame);
+            }
+        } else {
+            // Nothing from the current frame has been sent yet, so it is safe
+            // to replace it with the latest controller state.
+            queue.front() = std::move(frame);
+        }
         return;
     }
+
     if (queue.size() >= MAX_PENDING_FRAMES) {
         Serial.println("[PSX-GATT] TX queue full; dropping oldest frame");
         queue.pop_front();
