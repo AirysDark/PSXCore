@@ -65,8 +65,8 @@ bool psxCoreGattRefreshAdvertising() {
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
     if (!advertising) return false;
 
-    // PSXCore is a single shared BLE device: HID and custom GATT use the
-    // same connection. Never restart advertising while a client is connected.
+    // HID and the custom PSXCore service share one physical BLE connection.
+    // Do not restart advertising while a client is connected.
     if (!canAdvertise()) return false;
     if (advertising->isAdvertising()) return true;
 
@@ -86,12 +86,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     }
 
     NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-    if (advertising) {
-        // Priority 3: one physical BLE client connection only. HID and the
-        // PSXCore companion service are both exposed through that connection.
-        advertising->setMaxConnections(1);
-    }
-
     bool wasAdvertising = advertising && advertising->isAdvertising();
     if (wasAdvertising) {
         Serial.println("[PSX-GATT] Stopping advertising before GATT database update");
