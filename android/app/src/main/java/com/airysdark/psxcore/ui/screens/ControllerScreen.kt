@@ -71,11 +71,13 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Device Info", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
+
             if (state == ConnectionState.READY) {
                 Text("Version: ${info.firmwareVersion}", fontSize = 12.sp)
                 Text("Hardware: ${info.hardwareRevision}", fontSize = 12.sp)
                 Text("Protocol: v${info.protocolVersion}", fontSize = 12.sp)
                 Text("Build: ${info.buildDate}", fontSize = 12.sp)
+
                 battery?.let {
                     Text(
                         "Battery: $it%",
@@ -84,6 +86,7 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
                         color = if (it < 20) Color.Red else Color.Unspecified
                     )
                 }
+
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
@@ -91,7 +94,11 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
                 ServiceStatusRow("Companion Service", companionReady)
                 ServiceStatusRow("OTA Service", otaReady)
             } else {
-                Text("No device information available", color = Color.Gray, fontSize = 12.sp)
+                Text(
+                    "No device information available",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
             }
         }
     }
@@ -99,32 +106,46 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
 
 @Composable
 fun ServiceStatusRow(label: String, isReady: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
         Surface(
             modifier = Modifier.size(6.dp),
             shape = MaterialTheme.shapes.small,
             color = if (isReady) Color.Green else Color.Gray
         ) {}
+
         Spacer(modifier = Modifier.width(8.dp))
-        Text(text = "$label: ${if (isReady) "Ready" else "Not Available"}", fontSize = 11.sp)
+        Text(
+            text = "$label: ${if (isReady) "Ready" else "Not Available"}",
+            fontSize = 11.sp
+        )
     }
 }
 
 @Composable
 fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
-    var controlsCoolingDown by remember { mutableStateOf(false) }
+    var busyButtons by remember { mutableStateOf(setOf<String>()) }
     val scope = rememberCoroutineScope()
-    val controlsEnabled = state == ConnectionState.READY && !controlsCoolingDown
+    val connected = state == ConnectionState.READY
 
     fun submit(label: String, action: () -> Boolean) {
-        if (!controlsEnabled) return
-        Log.d("PSXCore", "Button clicked: $label")
-        if (!action()) return
+        if (!connected || label in busyButtons) return
 
-        controlsCoolingDown = true
+        Log.d("PSXCore", "Button clicked: $label")
+
+        if (!action()) {
+            Log.w("PSXCore", "Command was not accepted: $label")
+            return
+        }
+
+        // Lock only the button that was pressed. The other controls remain
+        // available and their commands are serialized by the BLE write queue.
+        busyButtons = busyButtons + label
         scope.launch {
             delay(350)
-            controlsCoolingDown = false
+            busyButtons = busyButtons - label
         }
     }
 
@@ -132,30 +153,49 @@ fun ControlButtons(viewModel: MainViewModel, state: ConnectionState) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Controls", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Button(
                     onClick = { submit("Ping", viewModel::sendPing) },
                     modifier = Modifier.weight(1f),
-                    enabled = controlsEnabled
-                ) { Text("Ping") }
+                    enabled = connected && "Ping" !in busyButtons
+                ) {
+                    Text("Ping")
+                }
+
                 Button(
                     onClick = { submit("Refresh", viewModel::sendGetState) },
                     modifier = Modifier.weight(1f),
-                    enabled = controlsEnabled
-                ) { Text("Refresh") }
+                    enabled = connected && "Refresh" !in busyButtons
+                ) {
+                    Text("Refresh")
+                }
             }
+
             Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Button(
                     onClick = { submit("Info", viewModel::sendGetInfo) },
                     modifier = Modifier.weight(1f),
-                    enabled = controlsEnabled
-                ) { Text("Info") }
+                    enabled = connected && "Info" !in busyButtons
+                ) {
+                    Text("Info")
+                }
+
                 Button(
                     onClick = { submit("Analog", viewModel::setAnalogMode) },
                     modifier = Modifier.weight(1f),
-                    enabled = controlsEnabled
-                ) { Text("Analog") }
+                    enabled = connected && "Analog" !in busyButtons
+                ) {
+                    Text("Analog")
+                }
             }
         }
     }
@@ -169,6 +209,7 @@ fun DebugLogCard(viewModel: MainViewModel) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Debug Log", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -208,6 +249,7 @@ fun ConnectionStatusHeader(
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp
                 )
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     val color = when (state) {
                         ConnectionState.READY -> Color.Green
@@ -218,12 +260,15 @@ fun ConnectionStatusHeader(
                         ConnectionState.COMPANION_MISSING -> Color.Red
                         ConnectionState.DISCONNECTED -> Color.Gray
                     }
+
                     Surface(
                         modifier = Modifier.size(8.dp),
                         shape = MaterialTheme.shapes.small,
                         color = color
                     ) {}
+
                     Spacer(modifier = Modifier.width(8.dp))
+
                     Text(
                         text = when (state) {
                             ConnectionState.READY -> "Connected"
@@ -244,45 +289,75 @@ fun ConnectionStatusHeader(
                 Button(onClick = {
                     Log.d("PSXCore", "Button clicked: Disconnect")
                     onDisconnect()
-                }) { Text("Disconnect") }
+                }) {
+                    Text("Disconnect")
+                }
             } else if (state == ConnectionState.DISCONNECTED || state == ConnectionState.ERROR) {
                 if (deviceName != null) {
                     Button(onClick = {
                         Log.d("PSXCore", "Button clicked: Reconnect ($deviceName)")
                         onConnect()
-                    }) { Text("Reconnect") }
+                    }) {
+                        Text("Reconnect")
+                    }
                 } else {
                     Button(onClick = {
                         Log.d("PSXCore", "Button clicked: Scan")
                         onScan()
-                    }) { Text("Scan") }
+                    }) {
+                        Text("Scan")
+                    }
                 }
             } else {
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp
+                )
             }
         }
     }
 }
 
 @Composable
-fun ControllerDiagnostics(inputState: ControllerInputState, state: ConnectionState) {
+fun ControllerDiagnostics(
+    inputState: ControllerInputState,
+    state: ConnectionState
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Diagnostics", fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
+
             if (state == ConnectionState.READY) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Column {
-                        Text("LX: ${inputState.leftStickX} LY: ${inputState.leftStickY}", fontSize = 12.sp)
-                        Text("RX: ${inputState.rightStickX} RY: ${inputState.rightStickY}", fontSize = 12.sp)
+                        Text(
+                            "LX: ${inputState.leftStickX} LY: ${inputState.leftStickY}",
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            "RX: ${inputState.rightStickX} RY: ${inputState.rightStickY}",
+                            fontSize = 12.sp
+                        )
                     }
+
                     Column(horizontalAlignment = Alignment.End) {
                         Text("Packets: ${inputState.packetCount}", fontSize = 12.sp)
-                        Text("Analog Mode: ${if (inputState.analogMode) "ON" else "OFF"}", fontSize = 12.sp)
+                        Text(
+                            "Analog Mode: ${if (inputState.analogMode) "ON" else "OFF"}",
+                            fontSize = 12.sp
+                        )
                     }
                 }
             } else {
-                Text("Waiting for controller connection...", color = Color.Gray, fontSize = 12.sp)
+                Text(
+                    "Waiting for controller connection...",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
             }
         }
     }
