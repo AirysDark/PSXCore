@@ -49,7 +49,7 @@ static int16_t psxAxisToHid(uint8_t v){return(int16_t)((uint32_t(v)*32767U+127U)
 static void sendConfigHello(){bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");}
 static void sendInfo(){bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");}
 static void sendSettings(){bleConfigSendText("{\"type\":\"settings\",\"analogControl\":true,\"sleepMinutes\":5}\n");}
-static void handleCommand(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="PING")bleConfigSendText("PONG\n");else if(command=="HELLO"||command=="INFO")sendInfo();else if(command=="GET_STATE")bleConfigNotifyControllerState();else if(command=="GET_SETTINGS")sendSettings();else if(command=="SET_ANALOG"){psxEnableAnalogMode();bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");}else bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");}
+static void handleCommand(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="PING")bleConfigSendText("PONG\n");else if(command=="HELLO"||command=="INFO")sendInfo();else if(command=="GET_STATE")bleConfigNotifyControllerState(true);else if(command=="GET_SETTINGS")sendSettings();else if(command=="SET_ANALOG"){psxEnableAnalogMode();bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");}else bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");}
 static void handleOtaControl(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="OTA_INFO")sendOtaInfo();else if(command.startsWith("OTA_BEGIN:")){String s=command.substring(strlen("OTA_BEGIN:"));s.trim();char* end=nullptr;unsigned long v=strtoul(s.c_str(),&end,10);if(!s.length()||end==s.c_str()||*end!='\0')abortOta("invalid_begin_command");else beginOta((size_t)v);}else if(command=="OTA_END")finishOta();else if(command=="OTA_RESET"){if(Update.isRunning())Update.abort();resetOtaState();sendOtaInfo();}else sendOtaText("{\"type\":\"ota\",\"state\":\"error\",\"reason\":\"unknown_control_command\"}\n");}
 static void handleOtaData(const uint8_t* data,size_t length){if(data&&length)writeOtaChunk(data,length);}
 
@@ -72,20 +72,13 @@ static void configureSharedAdvertising(){
   }
   if(advertising->isAdvertising()) advertising->stop();
   advertising->reset();
-
-  // Keep the primary advertising packet deliberately small.
-  // The custom PSXCore GATT service remains discoverable after connection.
   NimBLEAdvertisementData advertisingData;
   advertisingData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
   advertisingData.addServiceUUID(HID_SERVICE_UUID);
   advertising->setAdvertisementData(advertisingData);
-
-  // Put the full device name in the scan response so we do not exceed
-  // the 31-byte primary advertising payload.
   NimBLEAdvertisementData scanResponseData;
   scanResponseData.setName(BLE_DEVICE_NAME);
   advertising->setScanResponseData(scanResponseData);
-
   advertising->setAppearance(0x03C4);
   advertisingConfigured=true;
   bool started=advertising->start();
@@ -169,4 +162,4 @@ void bleGamepadUpdate(){ble_send_report();}
 bool bleConfigIsReady(){return configReady&&psxCoreGattIsReady();}
 void bleConfigSend(const uint8_t*d,size_t l){if(configReady&&d&&l)psxCoreGattSendResponse(d,l);}
 void bleConfigSendText(const char*t){if(t)bleConfigSend(reinterpret_cast<const uint8_t*>(t),strlen(t));}
-void bleConfigNotifyControllerState(){if(!configReady)return;const ControllerState&s=controllerState;bool changed=s.buttons!=lastStateButtons||s.lx!=lastStateLx||s.ly!=lastStateLy||s.rx!=lastStateRx||s.ry!=lastStateRy;if(!changed)return;char m[160];snprintf(m,sizeof(m),"{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u}\n",(unsigned long)s.buttons,s.lx,s.ly,s.rx,s.ry);psxCoreGattSendStateText(m);lastStateButtons=s.buttons;lastStateLx=s.lx;lastStateLy=s.ly;lastStateRx=s.rx;lastStateRy=s.ry;}
+void bleConfigNotifyControllerState(bool force){if(!configReady)return;const ControllerState&s=controllerState;bool changed=s.buttons!=lastStateButtons||s.lx!=lastStateLx||s.ly!=lastStateLy||s.rx!=lastStateRx||s.ry!=lastStateRy;if(!force&&!changed)return;char m[160];snprintf(m,sizeof(m),"{\"type\":\"state\",\"buttons\":%lu,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u}\n",(unsigned long)s.buttons,s.lx,s.ly,s.rx,s.ry);psxCoreGattSendStateText(m);lastStateButtons=s.buttons;lastStateLx=s.lx;lastStateLy=s.ly;lastStateRx=s.rx;lastStateRy=s.ry;}
