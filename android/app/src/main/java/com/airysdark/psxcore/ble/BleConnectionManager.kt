@@ -75,7 +75,8 @@ class BleConnectionManager(private val context: Context) {
     private var pendingWrite: CompletableDeferred<Int>? = null
 
     private val parser = PsxCoreMessageParser()
-    private var messageBuffer = StringBuilder()
+    private val messageBuffer = StringBuilder()
+    private var lastDataHash: Int = 0 // To prevent double-processing of the same notification
 
     private var isConnecting = false
     private val handler = Handler(Looper.getMainLooper())
@@ -126,10 +127,9 @@ class BleConnectionManager(private val context: Context) {
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            // On some Android versions, both onCharacteristicChanged overloads are called.
-            // We use a flag or only handle the modern one if we're on Tiramisu+.
+            // Only process if we're on a version that doesn't call the new overload
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                processData(characteristic.value ?: return, characteristic)
+                handleIncomingData(characteristic.value ?: return, characteristic.uuid)
             }
         }
 
@@ -138,37 +138,7 @@ class BleConnectionManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            processData(value, characteristic)
-        }
-
-        private fun processData(data: ByteArray, characteristic: BluetoothGattCharacteristic) {
-            when (characteristic.uuid) {
-                ProtocolConstants.PSX_TX_UUID -> {
-                    val chunk = String(data, StandardCharsets.UTF_8)
-                    
-                    synchronized(messageBuffer) {
-                        messageBuffer.append(chunk)
-                        
-                        var newlineIndex: Int
-                        while (messageBuffer.indexOf("\n").also { newlineIndex = it } >= 0) {
-                            val message = messageBuffer.substring(0, newlineIndex).trim()
-                            messageBuffer.delete(0, newlineIndex + 1)
-                            
-                            if (message.isNotEmpty()) {
-                                Log.d(tag, "[BLE] Complete message: $message")
-                                processIncomingMessage(message)
-                            }
-                        }
-                    }
-                }
-                ProtocolConstants.BATTERY_LEVEL_UUID -> {
-                    if (data.isNotEmpty()) {
-                        val level = data[0].toInt()
-                        Log.d(tag, "[BLE] Battery Level: $level%")
-                        _batteryLevel.value = level
-                    }
-                }
-            }
+            handleIncomingData(value, characteristic.uuid)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
@@ -201,13 +171,41 @@ class BleConnectionManager(private val context: Context) {
         }
     }
 
+    private fun handleIncomingData(data: ByteArray, uuid: java.util.UUID) {
+        if (data.isEmpty()) return
+
+        when (uuid) {
+            ProtocolConstants.PSX_TX_UUID -> {
+                val chunk = String(data, StandardCharsets.UTF_8)
+                
+                synchronized(messageBuffer) {
+                    messageBuffer.append(chunk)
+                    
+                    var newlineIndex: Int
+                    while (messageBuffer.indexOf("\n").also { newlineIndex = it } >= 0) {
+                        val message = messageBuffer.substring(0, newlineIndex).trim()
+                        messageBuffer.delete(0, newlineIndex + 1)
+                        
+                        if (message.isNotEmpty()) {
+                            Log.d(tag, "[BLE] Complete message received: $message")
+                            processIncomingMessage(message)
+                        }
+                    }
+                }
+            }
+            ProtocolConstants.BATTERY_LEVEL_UUID -> {
+                val level = data[0].toInt()
+                Log.d(tag, "[BLE] Battery Level: $level%")
+                _batteryLevel.value = level
+            }
+        }
+    }
+
     private fun processIncomingMessage(message: String) {
-        if (message.isEmpty()) return
-        
         // Update debug log with the latest message
         val currentLog = _receivedData.value
-        val newLog = if (currentLog.length > 500) {
-            message + "\n" + currentLog.substring(0, 400)
+        val newLog = if (currentLog.length > 2000) {
+            message + "\n" + currentLog.substring(0, 1500)
         } else {
             message + "\n" + currentLog
         }
@@ -227,6 +225,23 @@ class BleConnectionManager(private val context: Context) {
             parser.parseDeviceSettings(message)?.let {
                 Log.d(tag, "[BLE] Parsed Device Settings")
                 _deviceSettings.value = it
+                return
+            }
+
+            // OTA Messages
+            parser.parseOtaReady(message)?.let {
+                Log.d(tag, "[BLE] OTA Ready: chunk_size=$it")
+                _otaReady.tryEmit(it)
+                return
+            }
+            if (parser.parseOtaSuccess(message)) {
+                Log.d(tag, "[BLE] OTA Success received")
+                _otaResult.tryEmit(Result.success(Unit))
+                return
+            }
+            parser.parseOtaError(message)?.let {
+                Log.e(tag, "[BLE] OTA Error received: $it")
+                _otaResult.tryEmit(Result.failure(Exception(it)))
                 return
             }
         } else if (message == "PONG") {
@@ -268,8 +283,6 @@ class BleConnectionManager(private val context: Context) {
             batteryCharacteristic = batteryService.getCharacteristic(ProtocolConstants.BATTERY_LEVEL_UUID)
             if (batteryCharacteristic != null) {
                 gatt.setCharacteristicNotification(batteryCharacteristic!!, true)
-                // Note: In a production app with multiple notifications, we would queue these.
-                // We prioritize the primary PSX TX characteristic above.
             }
         }
     }
@@ -392,6 +405,10 @@ class BleConnectionManager(private val context: Context) {
         bluetoothGatt = null
         txCharacteristic = null
         rxCharacteristic = null
+        batteryCharacteristic = null
+        synchronized(messageBuffer) {
+            messageBuffer.setLength(0)
+        }
     }
 
     private fun handleDisconnect() {
