@@ -13,6 +13,7 @@ static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
 static bool gattInitializing = false;
 
+static const char* DEVICE_NAME      = "PSXCore";
 static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
 static const char* COMMAND_UUID     = "7a4f0001-0000-4f50-5358-434f52450001";
 static const char* RESPONSE_UUID    = "7a4f0002-0000-4f50-5358-434f52450001";
@@ -28,7 +29,6 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.command(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
-
 class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaControl) return;
@@ -36,7 +36,6 @@ class OtaControlCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.otaControl(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
-
 class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
         if (!characteristic || !rxCallbacks.otaData) return;
@@ -44,7 +43,6 @@ class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
         if (!value.empty()) rxCallbacks.otaData(reinterpret_cast<const uint8_t*>(value.data()), value.size());
     }
 };
-
 static CommandCallbacks commandCallbacks;
 static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
@@ -56,22 +54,26 @@ bool psxCoreGattRefreshAdvertising() {
         return false;
     }
 
-    if (advertising->isAdvertising()) {
-        advertising->stop();
-        delay(25);
-    }
+    if (advertising->isAdvertising()) advertising->stop();
+    delay(50);
 
-    // Re-add the PSXCore service UUID after HID has created its own service.
+    // Force the local GAP name used by Android scans.
+    NimBLEDevice::setDeviceName(DEVICE_NAME);
+    advertising->setName(DEVICE_NAME);
+    advertising->setAppearance(0x03C4); // generic gamepad appearance
     advertising->addServiceUUID(SERVICE_UUID);
     advertising->setScanResponse(true);
+    advertising->start();
 
-    bool started = advertising->start();
-    Serial.printf("[BLE] Advertising restart: %s\n", started ? "OK" : "FAILED");
-    if (started) {
-        Serial.println("[BLE] Discoverable device: PSXCore ESP32-S3");
-        Serial.println("[BLE] Services advertised: HID + PSXCore custom GATT");
+    delay(25);
+    bool advertisingNow = advertising->isAdvertising();
+    Serial.printf("[BLE] Advertising restart: %s\n", advertisingNow ? "OK" : "FAILED");
+    if (advertisingNow) {
+        Serial.printf("[BLE] DISCOVERABLE NAME: %s\n", DEVICE_NAME);
+        Serial.println("[BLE] Android scan should show: PSXCore");
+        Serial.println("[BLE] Advertised services: HID + PSXCore custom GATT");
     }
-    return started;
+    return advertisingNow;
 }
 
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
@@ -112,23 +114,20 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     gattReady = true;
     gattInitializing = false;
-
     Serial.println("[PSX-GATT] Custom PSXCore service READY");
     Serial.println("[PSX-GATT] COMMAND -> command callback");
     Serial.println("[PSX-GATT] OTA_CONTROL -> OTA control callback");
     Serial.println("[PSX-GATT] OTA_DATA -> raw firmware callback");
     Serial.println("[PSX-GATT] RESPONSE/STATE/OTA_STATUS notifications active");
-    return true;
+    return psxCoreGattRefreshAdvertising();
 }
 
 bool psxCoreGattIsReady() { return gattReady; }
-
 static void sendCharacteristic(NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
     characteristic->setValue(data, length);
     characteristic->notify();
 }
-
 void psxCoreGattSendResponse(const uint8_t* data, size_t length) { sendCharacteristic(responseChar, data, length); }
 void psxCoreGattSendResponseText(const char* text) { if (text) psxCoreGattSendResponse(reinterpret_cast<const uint8_t*>(text), strlen(text)); }
 void psxCoreGattSendState(const uint8_t* data, size_t length) { sendCharacteristic(stateChar, data, length); }
