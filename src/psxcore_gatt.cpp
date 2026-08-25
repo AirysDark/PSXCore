@@ -49,6 +49,31 @@ static CommandCallbacks commandCallbacks;
 static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
 
+bool psxCoreGattRefreshAdvertising() {
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    if (!advertising) {
+        Serial.println("[BLE] Advertising ERROR: object unavailable");
+        return false;
+    }
+
+    if (advertising->isAdvertising()) {
+        advertising->stop();
+        delay(25);
+    }
+
+    // Re-add the PSXCore service UUID after HID has created its own service.
+    advertising->addServiceUUID(SERVICE_UUID);
+    advertising->setScanResponse(true);
+
+    bool started = advertising->start();
+    Serial.printf("[BLE] Advertising restart: %s\n", started ? "OK" : "FAILED");
+    if (started) {
+        Serial.println("[BLE] Discoverable device: PSXCore ESP32-S3");
+        Serial.println("[BLE] Services advertised: HID + PSXCore custom GATT");
+    }
+    return started;
+}
+
 bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     rxCallbacks = callbacks;
     if (gattReady) return true;
@@ -85,8 +110,6 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
 
-    // NimBLE-Arduino automatically manages the CCCD (0x2902) for NOTIFY characteristics.
-    // Do not manually create descriptors here.
     gattReady = true;
     gattInitializing = false;
 
