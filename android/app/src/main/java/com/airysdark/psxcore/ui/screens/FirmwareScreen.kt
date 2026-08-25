@@ -25,6 +25,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
     val fileName by viewModel.updateManager.selectedFileName.collectAsState()
     val fileSize by viewModel.updateManager.selectedFileSize.collectAsState()
     val deviceInfo by viewModel.deviceInfo.collectAsState()
+    val otaStatusText by viewModel.updateManager.otaStatusText.collectAsState()
     val connectionState by viewModel.bleConnectionManager.connectionState.collectAsState()
     val scrollState = rememberScrollState()
 
@@ -99,7 +100,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(24.dp))
 
         if (updateState != UpdateState.IDLE && updateState != UpdateState.FILE_SELECTED) {
-            UpdateProgressCard(updateState, progress)
+            UpdateProgressCard(updateState, progress, otaStatusText)
         }
 
         if (updateState == UpdateState.COMPLETE) {
@@ -108,7 +109,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
             ) {
                 Text(
-                    "Update Successful! Controller is rebooting.",
+                    otaStatusText.ifEmpty { "Update Successful! Controller is rebooting." },
                     modifier = Modifier.padding(16.dp),
                     color = Color(0xFF2E7D32),
                     fontWeight = FontWeight.Bold
@@ -132,7 +133,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
         
         if (updateState == UpdateState.FAILED) {
             Text(
-                "Update failed: PSXCore firmware protocol not yet available for transfer.",
+                otaStatusText.ifEmpty { "Update failed: PSXCore firmware protocol not yet available for transfer." },
                 color = Color.Red,
                 modifier = Modifier.padding(top = 8.dp),
                 fontSize = 12.sp
@@ -142,7 +143,7 @@ fun FirmwareScreen(viewModel: MainViewModel) {
 }
 
 @Composable
-fun UpdateProgressCard(state: UpdateState, progress: Float) {
+fun UpdateProgressCard(state: UpdateState, progress: Float, statusText: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Transferring Firmware", fontWeight = FontWeight.Bold)
@@ -154,7 +155,7 @@ fun UpdateProgressCard(state: UpdateState, progress: Float) {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(state.name, fontSize = 12.sp, color = Color.Gray)
+                Text(statusText.ifEmpty { state.name }, fontSize = 12.sp, color = Color.Gray)
                 Text("${(safeProgress * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }

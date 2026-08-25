@@ -3,14 +3,18 @@ package com.airysdark.psxcore.ble
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelUuid
 import android.util.Log
 import com.airysdark.psxcore.model.BleDevice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 
 class BleScanner(bluetoothAdapter: BluetoothAdapter?) {
     private val tag = "BleScanner"
@@ -48,13 +52,28 @@ class BleScanner(bluetoothAdapter: BluetoothAdapter?) {
     }
 
     @SuppressLint("MissingPermission")
-    fun startScan(timeoutMs: Long = 10000) {
+    fun startScan(serviceUuid: UUID? = null, timeoutMs: Long = 10000) {
         if (scanner == null || _isScanning.value) return
         
-        Log.d(tag, "Starting BLE scan")
+        Log.d(tag, "Starting BLE scan (filter: $serviceUuid)")
         _foundDevices.value = emptyList()
         _isScanning.value = true
-        scanner.startScan(scanCallback)
+        
+        val filters = if (serviceUuid != null) {
+            listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(serviceUuid)).build())
+        } else {
+            null
+        }
+        
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+            
+        if (filters != null) {
+            scanner.startScan(filters, settings, scanCallback)
+        } else {
+            scanner.startScan(scanCallback)
+        }
         
         handler.postDelayed({
             if (_isScanning.value) {

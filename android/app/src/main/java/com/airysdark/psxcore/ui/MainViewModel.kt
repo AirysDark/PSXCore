@@ -42,12 +42,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val deviceSettings = bleConnectionManager.deviceSettings
     val batteryLevel = bleConnectionManager.batteryLevel
 
-    fun startScan() {
+    val isGamepadServiceReady = bleConnectionManager.isGamepadServiceReady
+    val isCompanionServiceReady = bleConnectionManager.isCompanionServiceReady
+    val isOtaReadyStatus = bleConnectionManager.isOtaReadyStatus
+
+    fun startScan(serviceUuid: java.util.UUID? = null) {
         if (!hasScanPermission()) {
             Toast.makeText(getApplication(), "Bluetooth scan permission required", Toast.LENGTH_SHORT).show()
             return
         }
-        bleScanner.startScan()
+        bleScanner.startScan(serviceUuid)
     }
 
     fun stopScan() {

@@ -7,6 +7,16 @@ import com.airysdark.psxcore.model.PsxButton
 import com.airysdark.psxcore.model.PsxButtonMapping
 import org.json.JSONObject
 
+data class OtaStatus(
+    val state: String,
+    val receivedSize: Long,
+    val expectedSize: Long,
+    val progress: Float,
+    val availableSpace: Long,
+    val error: String? = null,
+    val rebooting: Boolean = false
+)
+
 class PsxCoreMessageParser {
     fun parseState(message: String, currentCount: Long): ControllerInputState? {
         return try {
@@ -79,10 +89,30 @@ class PsxCoreMessageParser {
         }
     }
 
-    fun parseOtaReady(message: String): Int? {
+    fun parseOtaStatus(message: String): OtaStatus? {
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "ota_ready") {
+            if (json.optString("type") == "ota") {
+                OtaStatus(
+                    state = json.optString("state", ""),
+                    receivedSize = json.optLong("receivedSize", 0),
+                    expectedSize = json.optLong("expectedSize", 0),
+                    progress = json.optDouble("progress", 0.0).toFloat(),
+                    availableSpace = json.optLong("availableSpace", 0),
+                    error = json.optString("error", "").let { if (it.isEmpty()) null else it },
+                    rebooting = json.optBoolean("rebooting", false)
+                )
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun parseOtaReady(message: String): Int? {
+        if (message == "OTA_READY") return 180
+        return try {
+            val json = JSONObject(message)
+            if (json.optString("type") == "ota" && (json.optString("state") == "ready" || json.optString("state") == "receiving")) {
                 json.optInt("chunk_size", 180)
             } else null
         } catch (e: Exception) {
@@ -91,19 +121,21 @@ class PsxCoreMessageParser {
     }
 
     fun parseOtaSuccess(message: String): Boolean {
+        if (message == "OTA_SUCCESS") return true
         return try {
             val json = JSONObject(message)
-            json.optString("type") == "ota_success"
+            json.optString("type") == "ota" && json.optString("state") == "success"
         } catch (e: Exception) {
             false
         }
     }
 
     fun parseOtaError(message: String): String? {
+        if (message.startsWith("OTA_ERROR:")) return message.substring(10)
         return try {
             val json = JSONObject(message)
-            if (json.optString("type") == "ota_error") {
-                json.optString("message", "Unknown OTA error")
+            if (json.optString("type") == "ota" && json.optString("state") == "error") {
+                json.optString("error", "Unknown OTA error")
             } else null
         } catch (e: Exception) {
             null

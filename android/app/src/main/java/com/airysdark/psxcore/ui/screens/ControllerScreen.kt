@@ -74,6 +74,10 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
     val battery by viewModel.batteryLevel.collectAsState()
     val state by viewModel.bleConnectionManager.connectionState.collectAsState()
     
+    val gamepadReady by viewModel.isGamepadServiceReady.collectAsState()
+    val companionReady by viewModel.isCompanionServiceReady.collectAsState()
+    val otaReady by viewModel.isOtaReadyStatus.collectAsState()
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Device Info", fontWeight = FontWeight.Bold)
@@ -85,10 +89,31 @@ fun DeviceInfoCard(viewModel: MainViewModel) {
                 battery?.let {
                     Text("Battery: $it%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (it < 20) Color.Red else Color.Unspecified)
                 }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                ServiceStatusRow("Gamepad Service", gamepadReady)
+                ServiceStatusRow("Companion Service", companionReady)
+                ServiceStatusRow("OTA Service", otaReady)
             } else {
                 Text("No device information available", color = Color.Gray, fontSize = 12.sp)
             }
         }
+    }
+}
+
+@Composable
+fun ServiceStatusRow(label: String, isReady: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+        Surface(
+            modifier = Modifier.size(6.dp),
+            shape = MaterialTheme.shapes.small,
+            color = if (isReady) Color.Green else Color.Gray
+        ) {}
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(text = "$label: ${if (isReady) "Ready" else "Not Available"}", fontSize = 11.sp)
     }
 }
 

@@ -28,6 +28,9 @@ object ProtocolConstants {
     // 6. OTA STATUS - ESP32 -> Android (NOTIFY)
     val PSX_OTA_STATUS_UUID: UUID = UUID.fromString("12345678-1234-5678-1234-56789abc0006")
 
+    // Standard HID Service
+    val HID_SERVICE_UUID: UUID = UUID.fromString("00001812-0000-1000-8000-00805f9b34fb")
+
     // Standard Bluetooth Descriptor for Notifications
     val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     

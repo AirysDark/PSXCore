@@ -62,6 +62,15 @@ class BleConnectionManager(private val context: Context) {
     private val _batteryLevel = MutableStateFlow<Int?>(null)
     val batteryLevel: StateFlow<Int?> = _batteryLevel.asStateFlow()
 
+    private val _isGamepadServiceReady = MutableStateFlow(false)
+    val isGamepadServiceReady: StateFlow<Boolean> = _isGamepadServiceReady.asStateFlow()
+
+    private val _isCompanionServiceReady = MutableStateFlow(false)
+    val isCompanionServiceReady: StateFlow<Boolean> = _isCompanionServiceReady.asStateFlow()
+
+    private val _isOtaReadyStatus = MutableStateFlow(false)
+    val isOtaReadyStatus: StateFlow<Boolean> = _isOtaReadyStatus.asStateFlow()
+
     private val _otaReady = MutableSharedFlow<Int>(extraBufferCapacity = 1)
     val otaReady = _otaReady.asSharedFlow()
 
@@ -180,6 +189,8 @@ class BleConnectionManager(private val context: Context) {
             } else {
                 Log.d(tag, "[BLE] All notifications enabled, Controller READY")
                 _connectionState.value = ConnectionState.READY
+                _isCompanionServiceReady.value = true
+                _isOtaReadyStatus.value = true
                 isConnecting = false
                 handler.removeCallbacks(timeoutRunnable)
                 
@@ -252,9 +263,19 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun setupCharacteristics(gatt: BluetoothGatt) {
+        // Check for Gamepad Service
+        val hidService = gatt.getService(ProtocolConstants.HID_SERVICE_UUID)
+        if (hidService != null) {
+            Log.d(tag, "[BLE] Gamepad (HID) service found")
+            _isGamepadServiceReady.value = true
+        } else {
+            Log.w(tag, "[BLE] Gamepad (HID) service not found")
+            _isGamepadServiceReady.value = false
+        }
+
         val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
         if (service != null) {
-            Log.d(tag, "[BLE] PSXCore service found")
+            Log.d(tag, "[BLE] PSXCore custom service found")
             commandChar = service.getCharacteristic(ProtocolConstants.PSX_COMMAND_UUID)
             responseChar = service.getCharacteristic(ProtocolConstants.PSX_RESPONSE_UUID)
             stateChar = service.getCharacteristic(ProtocolConstants.PSX_STATE_UUID)
@@ -334,10 +355,6 @@ class BleConnectionManager(private val context: Context) {
     suspend fun sendOtaData(data: ByteArray): Boolean {
         val char = otaDataChar ?: return false
         val gatt = bluetoothGatt ?: return false
-        
-        // Use NO_RESPONSE for faster transfer as requested.
-        // For raw binary we don't necessarily need to wait for write completion if the stack handles it.
-        // But for flow control, we could wait if needed.
         return writeCharacteristicCompat(gatt, char, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
     }
 
@@ -371,6 +388,9 @@ class BleConnectionManager(private val context: Context) {
         otaControlChar = null
         otaDataChar = null
         otaStatusChar = null
+        _isGamepadServiceReady.value = false
+        _isCompanionServiceReady.value = false
+        _isOtaReadyStatus.value = false
         synchronized(responseBuffer) { responseBuffer.setLength(0) }
         synchronized(stateBuffer) { stateBuffer.setLength(0) }
         synchronized(otaStatusBuffer) { otaStatusBuffer.setLength(0) }
