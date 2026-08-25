@@ -2,6 +2,7 @@
 #include <BleGamepad.h>
 #include <Update.h>
 #include <esp_partition.h>
+#include <esp_ota_ops.h>
 #include <esp_system.h>
 #include "controller_state.h"
 #include "debug_status.h"
@@ -58,15 +59,13 @@ static bool writeOtaChunk(const uint8_t* data,size_t length) {
   if(!Update.isRunning() || otaState!=OtaState::Receiving){abortOta("chunk_without_active_update");return false;}
   if(!data || !length){abortOta("empty_chunk");return false;}
   if(otaReceivedSize+length>otaExpectedSize){abortOta("chunk_exceeds_expected_size");return false;}
-  size_t written=Update.write(data,length);
+  size_t written=Update.write(const_cast<uint8_t*>(data),length);
   if(written!=length){ otaReceivedSize+=written; Serial.printf("[OTA] WRITE FAILED: wanted=%lu wrote=%lu total=%lu/%lu\n",(unsigned long)length,(unsigned long)written,(unsigned long)otaReceivedSize,(unsigned long)otaExpectedSize); abortOta("write_failed"); return false; }
   otaReceivedSize+=written;
   sendOtaProgress(false);
   return true;
 }
 
-// PART 4: Require an exact byte count, validate the image with Update.end(),
-// report success, then reboot into the newly selected OTA partition.
 static bool finishOta() {
   if(otaState!=OtaState::Receiving || !Update.isRunning()){ abortOta("end_without_active_update"); return false; }
   if(otaReceivedSize!=otaExpectedSize){
@@ -107,7 +106,7 @@ static void onConfigData(const uint8_t* data,size_t length) {
   else if(command=="SET_ANALOG"){psxEnableAnalogMode();bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");}
   else if(command=="OTA_INFO")sendOtaInfo();
   else if(command.startsWith("OTA_BEGIN:")){String s=command.substring(strlen("OTA_BEGIN:"));s.trim();char* end=nullptr;unsigned long v=strtoul(s.c_str(),&end,10);if(!s.length()||end==s.c_str()||*end!='\0')abortOta("invalid_begin_command");else beginOta((size_t)v);}
-  else if(command=="OTA_END"){ if(finishOta()) { /* reboot is handled from the main loop after BLE notification flushes */ } }
+  else if(command=="OTA_END"){ finishOta(); }
   else if(command=="OTA_RESET"){if(Update.isRunning())Update.abort();resetOtaState();sendOtaInfo();}
   else if(otaState==OtaState::Receiving&&Update.isRunning()) { abortOta("unexpected_text_during_update"); }
   else bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");
