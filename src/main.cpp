@@ -5,17 +5,19 @@
 
 #include "pins.h"
 #include "version.h"
-#include "controller_state.h"
-#include "psx_reader.h"
-#include "psx_pin_sweep.h"
-#include "psx_analog_mode.h"
-#include "ble_gamepad.h"
-#include "psx_config.h"
 #include "sd_update.h"
 #include "debug_status.h"
 
+#include <PSXController.h>
+#include <PSXInputMapper.h>
+#include <PSXBLEGamepad.h>
+
 static bool systemBooted = false;
 static bool psxReady = false;
+
+static PSXController psxController;
+static PSXInputMapper inputMapper;
+static PSXBLEGamepad bleGamepad;
 
 static void bootMark(const char *name, bool ok) {
   Serial.print("[BOOT] ");
@@ -52,6 +54,21 @@ static bool testPsram() {
 #endif
 }
 
+static bool beginPSXController() {
+  PSXControllerPins pins;
+  pins.data = PSX_DATA;
+  pins.command = PSX_COMMAND;
+  pins.attention = PSX_ATTENTION;
+  pins.clock = PSX_CLOCK;
+
+  PSXControllerConfig config;
+  config.requestAnalog = true;
+  config.requestPressure = true;
+  config.lockAnalogMode = true;
+
+  return psxController.begin(pins, config);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -81,51 +98,28 @@ void setup() {
   }
   Serial.println("[BOOT] No SD update - continuing");
 
-  Serial.println("[BOOT] Initializing PSX bus...");
-  psxPinsBegin();
-  psxBegin();
-
-  uint8_t controllerId = 0;
-  psxReady = psxProbeController(&controllerId);
-
+  Serial.println("[BOOT] Initializing PSXController library...");
+  psxReady = beginPSXController();
   if (psxReady) {
-    Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
+    const PSXControllerState& state = psxController.state();
+    Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", state.mode);
+    Serial.printf("[BOOT] PSX mode            %s\n",
+                  state.pressureMode ? "PRESSURE" : (state.analogMode ? "ANALOG" : "DIGITAL"));
+    Serial.println("[BOOT] PSX input           ENABLED");
   } else {
     Serial.println("[BOOT] PSX controller      NO RESPONSE");
-    Serial.println("[BOOT] Starting pin sweep recovery...");
-
-    if (psxPinSweep()) {
-      Serial.println("[BOOT] Re-initializing PSX bus with corrected pins...");
-      psxBegin();
-      psxReady = psxProbeController(&controllerId);
-
-      if (psxReady) {
-        Serial.printf("[BOOT] PSX controller      OK (ID=%02X)\n", controllerId);
-      } else {
-        Serial.println("[BOOT] PSX controller      RESPONSE NOT CONFIRMED");
-      }
-    } else {
-      Serial.println("[BOOT] Pin sweep failed");
-    }
-  }
-
-  if (psxReady) {
-    Serial.println("[BOOT] PSX input           ENABLED");
-    bootMark("PSX analog config", psx_enable_analog_mode());
-  } else {
     Serial.println("[BOOT] PSX input           SEARCHING");
-    Serial.println("[BOOT] PSX analog config   SKIPPED (no controller)");
   }
 
-  Serial.println("[BOOT] Starting Bluetooth HID...");
-  bleGamepadBegin();
-  bootMark("Bluetooth HID", true);
-  Serial.println("[BOOT] BLE advertising      ON");
+  Serial.println("[BOOT] Starting custom Bluetooth HID...");
+  const bool bleReady = bleGamepad.begin("PSXCore Controller");
+  bootMark("Bluetooth HID", bleReady);
+  Serial.println(bleReady ? "[BOOT] BLE advertising      ON" : "[BOOT] BLE advertising      FAIL");
 
-  systemBooted = true;
+  systemBooted = bleReady;
 
   Serial.println("================================");
-  Serial.println("[BOOT] PSXCore READY");
+  Serial.println(systemBooted ? "[BOOT] PSXCore READY" : "[BOOT] PSXCore STARTUP FAILED");
   Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
   Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
   Serial.println("================================");
@@ -134,11 +128,11 @@ void setup() {
 void loop() {
   if (!systemBooted) return;
 
-  if (psxReady) {
-    psxReadController();
-  }
+  psxReady = psxController.update();
 
-  bleGamepadUpdate();
+  const PSXInputState input = inputMapper.map(psxController.state());
+  bleGamepad.send(input);
+
   debugStatusLoop();
   delay(5);
 }
