@@ -146,6 +146,7 @@ void setup() {
   idleState.lx = idleState.ly = idleState.rx = idleState.ry = 0x80;
   controllerState = idleState;
   powerManagerBegin(idleState);
+  Serial.println("[BOOT] Power manager        ACTIVE");
   Serial.println("[BOOT] Idle sleep           5 MINUTES");
 
   systemBooted = true;
