@@ -7,6 +7,7 @@
 #include "pins.h"
 #include "controller_state.h"
 #include "debug_status.h"
+#include "analog_button.h"
 
 static bool validControllerId(uint8_t id) {
   return id == 0x41 || id == 0x73 || id == 0x79;
@@ -118,6 +119,11 @@ void psxReadController() {
     debugStatusPSXState(false);
     return;
   }
+
+  // The physical ANALOG switch is represented by the controller changing its
+  // response ID, not by a normal button-mask bit. Feed that transition into
+  // the system-button layer before decoding the normal controller state.
+  analogButtonUpdate(packet[1]);
 
   // Digital controllers return only the two button bytes. Keep those valid,
   // but never interpret trailing bytes as analog axes unless the controller
