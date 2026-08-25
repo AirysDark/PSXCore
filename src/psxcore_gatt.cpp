@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <mutex>
 #include "psxcore_gatt.h"
 
 static NimBLEService* psxService = nullptr;
@@ -12,6 +13,11 @@ static NimBLECharacteristic* otaStatusChar = nullptr;
 static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
 static bool gattInitializing = false;
+
+// Serialize complete framed messages. BLE callbacks and the controller loop can
+// both publish, and interleaving chunks from different messages corrupts the
+// Android line stream.
+static std::mutex gattNotifyMutex;
 
 // PSXCore Companion GATT v7 contract.
 // These UUIDs MUST stay identical to android/.../ProtocolConstants.kt.
@@ -131,16 +137,30 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
 bool psxCoreGattIsReady() { return gattReady; }
 
+// Android is receiving only ATT-sized notification payloads on this link.
+// Do not rely on NimBLE to fragment a long characteristic value for us: split
+// every framed message into safe 20-byte notification chunks and keep the whole
+// frame serialized so another publisher cannot interleave its chunks.
 static void sendCharacteristic(
     NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
-    characteristic->setValue(data, length);
-    characteristic->notify();
+
+    constexpr size_t BLE_SAFE_NOTIFY_CHUNK = 20;
+    std::lock_guard<std::mutex> lock(gattNotifyMutex);
+
+    size_t offset = 0;
+    while (offset < length) {
+        const size_t chunkLength = min(BLE_SAFE_NOTIFY_CHUNK, length - offset);
+        characteristic->setValue(data + offset, chunkLength);
+        characteristic->notify();
+        offset += chunkLength;
+    }
 }
 
 // RESPONSE, STATE and OTA_STATUS are newline-framed text streams on Android.
-// Enforce the delimiter here so every notification path uses the same framing,
-// including callers that use the uint8_t*/length APIs instead of *Text().
+// Enforce exactly one terminating delimiter for every logical message before
+// transport chunking. Android's persistent buffer reassembles chunks and only
+// parses complete frames ending in '\n'.
 static void sendDataFrame(
     NimBLECharacteristic* characteristic,
     const uint8_t* data,
