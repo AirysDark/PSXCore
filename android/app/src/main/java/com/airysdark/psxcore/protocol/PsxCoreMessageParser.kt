@@ -18,11 +18,39 @@ data class OtaStatus(
 )
 
 class PsxCoreMessageParser {
-    fun parseState(message: String, currentCount: Long): ControllerInputState? {
+    fun parseState(message: String, currentCount: Long, currentAnalogMode: Boolean): ControllerInputState? {
         return try {
             val json = JSONObject(message)
             if (json.optString("type") == "state") {
                 val buttons = json.optInt("buttons", 0)
+                
+                // Robust Analog Mode detection (checking all common field name variations):
+                val analogField = if (json.has("analog")) json.opt("analog") else null
+                val analogModeField = if (json.has("analogMode")) json.opt("analogMode") else null
+                val analog_modeField = if (json.has("analog_mode")) json.opt("analog_mode") else null
+                val modeField = json.optString("mode", "")
+                
+                // Only update if one of the fields is actually present in the JSON.
+                // Otherwise, preserve the current state to avoid flickering to false.
+                val hasAnalogField = json.has("analog") || json.has("analogMode") || 
+                                     json.has("analog_mode") || json.has("mode")
+                
+                val isAnalog = if (hasAnalogField) {
+                    when {
+                        analogField is Boolean -> analogField
+                        analogField is Int -> analogField != 0
+                        analogModeField is Boolean -> analogModeField
+                        analogModeField is Int -> analogModeField != 0
+                        analog_modeField is Boolean -> analog_modeField
+                        analog_modeField is Int -> analog_modeField != 0
+                        modeField.equals("ANALOG", ignoreCase = true) -> true
+                        modeField.equals("DIGITAL", ignoreCase = true) -> false
+                        else -> json.optBoolean("analog", json.optBoolean("analogMode", json.optBoolean("analog_mode", currentAnalogMode)))
+                    }
+                } else {
+                    currentAnalogMode
+                }
+
                 ControllerInputState(
                     dpadUp = PsxButtonMapping.isPressed(buttons, PsxButton.UP),
                     dpadDown = PsxButtonMapping.isPressed(buttons, PsxButton.DOWN),
@@ -41,7 +69,7 @@ class PsxCoreMessageParser {
                     start = PsxButtonMapping.isPressed(buttons, PsxButton.START),
                     select = PsxButtonMapping.isPressed(buttons, PsxButton.SELECT),
                     analogButton = PsxButtonMapping.isPressed(buttons, PsxButton.ANALOG),
-                    analogMode = json.optBoolean("analog", false),
+                    analogMode = isAnalog,
                     leftStickX = json.optInt("lx", 128),
                     leftStickY = json.optInt("ly", 128),
                     rightStickX = json.optInt("rx", 128),
