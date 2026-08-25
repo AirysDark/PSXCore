@@ -24,6 +24,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 enum class ConnectionState {
@@ -46,6 +49,7 @@ class BleConnectionManager(private val context: Context) {
     private var serviceDiscoveryRetried = false
     private var serviceDiscoveryStarted = false
     private var currentTimeout: Runnable? = null
+    private var writeTimeout: Runnable? = null
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -55,6 +59,9 @@ class BleConnectionManager(private val context: Context) {
 
     private val _receivedData = MutableStateFlow("")
     val receivedData: StateFlow<String> = _receivedData.asStateFlow()
+
+    private val _debugLog = MutableStateFlow("")
+    val debugLog: StateFlow<String> = _debugLog.asStateFlow()
 
     private val _inputState = MutableStateFlow(ControllerInputState())
     val inputState: StateFlow<ControllerInputState> = _inputState.asStateFlow()
@@ -107,11 +114,32 @@ class BleConnectionManager(private val context: Context) {
     private val stateBuffer = StringBuilder()
     private val otaBuffer = StringBuilder()
 
+    private fun addDebugLog(message: String) {
+        val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
+        val line = "[$timestamp] $message"
+
+        synchronized(_debugLog) {
+            _debugLog.value = buildString {
+                if (_debugLog.value.isNotBlank()) {
+                    append(_debugLog.value)
+                    append('\n')
+                }
+                append(line)
+            }.takeLast(12000)
+        }
+
+        Log.d(tag, line)
+    }
+
+    private fun clearDebugLog() {
+        _debugLog.value = ""
+    }
+
     private fun isActiveGatt(gatt: BluetoothGatt): Boolean = bluetoothGatt === gatt
 
     private fun stale(gatt: BluetoothGatt, event: String): Boolean {
         if (!isActiveGatt(gatt)) {
-            Log.w(tag, "[BLE] Ignoring stale $event callback")
+            addDebugLog("Ignoring stale $event callback")
             return true
         }
         return false
@@ -123,15 +151,17 @@ class BleConnectionManager(private val context: Context) {
             if (stale(gatt, "connection")) return
 
             val id = activeAttemptId
-            Log.d(tag, "[BLE][$id] state=$newState status=$status")
+            addDebugLog("Connection state=$newState status=$status")
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                addDebugLog("GATT connection error status=$status")
                 handleError(id, gatt)
                 return
             }
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
+                    addDebugLog("Connected; starting service discovery")
                     _connectionState.value = ConnectionState.DISCOVERING_SERVICES
                     serviceDiscoveryStarted = false
                     serviceDiscoveryRetried = false
@@ -147,7 +177,8 @@ class BleConnectionManager(private val context: Context) {
 
                     handler.postDelayed({
                         if (isActiveGatt(gatt)) {
-                            gatt.requestMtu(512)
+                            val started = gatt.requestMtu(512)
+                            addDebugLog("MTU 512 request ${if (started) "started" else "not started"}")
                         }
                     }, 800)
                 }
@@ -158,7 +189,7 @@ class BleConnectionManager(private val context: Context) {
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             if (stale(gatt, "MTU")) return
-            Log.d(tag, "[BLE][$activeAttemptId] MTU=$mtu status=$status")
+            addDebugLog("MTU changed to $mtu status=$status")
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -168,20 +199,20 @@ class BleConnectionManager(private val context: Context) {
             serviceDiscoveryStarted = false
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                addDebugLog("Service discovery failed status=$status")
                 handleError(id, gatt)
                 return
             }
 
-            Log.d(
-                tag,
-                "[BLE][$id] Services discovered: ${gatt.services.joinToString { it.uuid.toString() }}"
+            addDebugLog(
+                "Services discovered: ${gatt.services.joinToString { it.uuid.toString() }}"
             )
 
             val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
 
             if (service == null && !serviceDiscoveryRetried) {
                 serviceDiscoveryRetried = true
-                Log.w(tag, "[BLE][$id] PSXCore service missing; retrying discovery once")
+                addDebugLog("PSXCore service missing; retrying discovery once")
                 handler.postDelayed({
                     if (isActiveGatt(gatt)) {
                         startServiceDiscovery(gatt, id)
@@ -196,9 +227,11 @@ class BleConnectionManager(private val context: Context) {
                 _connectionState.value = ConnectionState.COMPANION_MISSING
                 isConnecting = false
                 cancelTimeout()
+                addDebugLog("PSXCore companion service missing")
                 return
             }
 
+            addDebugLog("PSXCore companion service found")
             _connectionState.value = ConnectionState.ENABLING_NOTIFICATIONS
             setupCharacteristics(gatt)
         }
@@ -211,8 +244,10 @@ class BleConnectionManager(private val context: Context) {
             if (stale(gatt, "descriptor")) return
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
+                addDebugLog("Notifications enabled for ${descriptor.characteristic.uuid}")
                 processNextDescriptor(gatt)
             } else {
+                addDebugLog("Notification setup failed status=$status uuid=${descriptor.characteristic.uuid}")
                 handleError(activeAttemptId, gatt)
             }
         }
@@ -245,18 +280,19 @@ class BleConnectionManager(private val context: Context) {
         ) {
             if (stale(gatt, "write")) return
 
+            cancelWriteTimeout()
+
             val completed = synchronized(writeQueue) {
-                if (writeQueue.isNotEmpty()) writeQueue.removeFirst() else null
-                    .also { writeInProgress = false }
+                val pending = if (writeQueue.isNotEmpty()) writeQueue.removeFirst() else null
+                writeInProgress = false
+                pending
             }
 
+            val label = completed?.label ?: "unknown"
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.d(tag, "[BLE] Write complete: ${completed?.label ?: "unknown"}")
+                addDebugLog("TX complete: $label")
             } else {
-                Log.e(
-                    tag,
-                    "[BLE] Write failed status=$status label=${completed?.label ?: "unknown"} uuid=${characteristic.uuid}"
-                )
+                addDebugLog("TX failed: $label status=$status uuid=${characteristic.uuid}")
             }
 
             processNextWrite(gatt)
@@ -268,10 +304,11 @@ class BleConnectionManager(private val context: Context) {
         if (!isActiveGatt(gatt) || id != activeAttemptId || serviceDiscoveryStarted) return
 
         serviceDiscoveryStarted = true
-        Log.d(tag, "[BLE][$id] Starting service discovery")
+        addDebugLog("Starting service discovery")
 
         if (!gatt.discoverServices()) {
             serviceDiscoveryStarted = false
+            addDebugLog("Failed to start service discovery")
             handleError(id, gatt)
         }
     }
@@ -283,6 +320,7 @@ class BleConnectionManager(private val context: Context) {
 
         val service = gatt.getService(ProtocolConstants.PSXCORE_SERVICE_UUID)
             ?: run {
+                addDebugLog("PSXCore service disappeared during setup")
                 handleError(activeAttemptId, gatt)
                 return
             }
@@ -301,7 +339,7 @@ class BleConnectionManager(private val context: Context) {
             otaDataChar == null ||
             otaStatusChar == null
         ) {
-            Log.e(tag, "[BLE] Required PSXCore characteristics missing")
+            addDebugLog("Required PSXCore characteristics missing")
             handleError(activeAttemptId, gatt)
             return
         }
@@ -314,8 +352,13 @@ class BleConnectionManager(private val context: Context) {
                 if (gatt.setCharacteristicNotification(characteristic, true)) {
                     characteristic.getDescriptor(ProtocolConstants.CCCD_UUID)
                         ?.let { descriptorQueue.addLast(it) }
+                        ?: run {
+                            addDebugLog("CCCD missing for ${characteristic.uuid}")
+                            handleError(activeAttemptId, gatt)
+                            return
+                        }
                 } else {
-                    Log.e(tag, "[BLE] Failed to enable local notifications for ${characteristic.uuid}")
+                    addDebugLog("Failed to enable local notifications for ${characteristic.uuid}")
                     handleError(activeAttemptId, gatt)
                     return
                 }
@@ -335,10 +378,7 @@ class BleConnectionManager(private val context: Context) {
             _isCompanionServiceReady.value = true
             _isOtaReadyStatus.value = true
             isConnecting = false
-
-            // Do not automatically send GET_STATE, INFO, or GET_SETTINGS here.
-            // The four controller buttons now own their commands independently.
-            Log.d(tag, "[BLE] Controller READY; waiting for user command")
+            addDebugLog("Controller READY; waiting for user command")
             return
         }
 
@@ -348,6 +388,7 @@ class BleConnectionManager(private val context: Context) {
                 BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             )
         ) {
+            addDebugLog("Failed to start notification descriptor write")
             handleError(activeAttemptId, gatt)
         }
     }
@@ -359,7 +400,7 @@ class BleConnectionManager(private val context: Context) {
     ) {
         synchronized(buffer) {
             if (buffer.length > 4096) {
-                Log.w(tag, "[BLE] Stream buffer overflow; clearing stale data")
+                addDebugLog("Stream buffer overflow; clearing stale data")
                 buffer.setLength(0)
             }
 
@@ -380,7 +421,7 @@ class BleConnectionManager(private val context: Context) {
                             try {
                                 consume(part)
                             } catch (e: Exception) {
-                                Log.e(tag, "[BLE] Message processing failed: ${e.message}")
+                                addDebugLog("Message processing failed: ${e.message}")
                             }
                         }
                 }
@@ -393,6 +434,8 @@ class BleConnectionManager(private val context: Context) {
             ProtocolConstants.PSX_RESPONSE_UUID -> {
                 processStream(data, responseBuffer) { message ->
                     _receivedData.value = message
+                    addDebugLog("RX RESPONSE: $message")
+
                     if (message.startsWith("{")) {
                         parser.parseDeviceInfo(message)?.let {
                             _deviceInfo.value = it
@@ -406,6 +449,8 @@ class BleConnectionManager(private val context: Context) {
 
             ProtocolConstants.PSX_CONTROLLER_STATE_UUID -> {
                 processStream(data, stateBuffer) { message ->
+                    addDebugLog("RX STATE: $message")
+
                     if (message.startsWith("{")) {
                         parser.parseState(
                             message,
@@ -420,11 +465,15 @@ class BleConnectionManager(private val context: Context) {
 
             ProtocolConstants.PSX_OTA_STATUS_UUID -> {
                 processStream(data, otaBuffer) { message ->
+                    addDebugLog("RX OTA: $message")
+
                     if (message.startsWith("{")) {
                         parser.parseOtaStatus(message)
                     }
                 }
             }
+
+            else -> addDebugLog("RX unknown UUID=$uuid bytes=${data.size}")
         }
     }
 
@@ -434,22 +483,28 @@ class BleConnectionManager(private val context: Context) {
             (_connectionState.value == ConnectionState.READY &&
                 bluetoothGatt?.device?.address == address)
         ) {
+            addDebugLog("Connect ignored; connection already active")
             return
         }
 
         activeAttemptId++
         val id = activeAttemptId
+        clearDebugLog()
+        addDebugLog("Connecting to $address")
         cancelTimeout()
+        cancelWriteTimeout()
         closeGatt(false)
 
         val adapter =
             (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
                 ?: run {
+                    addDebugLog("Bluetooth adapter unavailable")
                     _connectionState.value = ConnectionState.ERROR
                     return
                 }
 
         if (!adapter.isEnabled) {
+            addDebugLog("Bluetooth adapter disabled")
             _connectionState.value = ConnectionState.ERROR
             return
         }
@@ -467,6 +522,7 @@ class BleConnectionManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        addDebugLog("Disconnect requested")
         activeAttemptId++
         closeGatt(true)
         _connectionState.value = ConnectionState.DISCONNECTED
@@ -475,12 +531,20 @@ class BleConnectionManager(private val context: Context) {
     }
 
     fun sendCommand(command: String): Boolean {
-        val characteristic = commandChar ?: return false
+        val characteristic = commandChar
+        if (characteristic == null) {
+            addDebugLog("TX rejected: $command (command characteristic unavailable)")
+            return false
+        }
         return enqueueWrite(command, characteristic, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
     }
 
     fun sendOtaControl(command: String): Boolean {
-        val characteristic = otaControlChar ?: return false
+        val characteristic = otaControlChar
+        if (characteristic == null) {
+            addDebugLog("OTA TX rejected: $command (OTA control unavailable)")
+            return false
+        }
         return enqueueWrite(command, characteristic, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
     }
 
@@ -488,12 +552,14 @@ class BleConnectionManager(private val context: Context) {
     suspend fun sendOtaData(data: ByteArray): Boolean {
         val gatt = bluetoothGatt ?: return false
         val characteristic = otaDataChar ?: return false
-        return writeCharacteristicCompat(
+        val started = writeCharacteristicCompat(
             gatt,
             characteristic,
             data,
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         )
+        if (!started) addDebugLog("OTA data write could not be started")
+        return started
     }
 
     private fun enqueueWrite(
@@ -501,17 +567,18 @@ class BleConnectionManager(private val context: Context) {
         characteristic: BluetoothGattCharacteristic,
         type: Int
     ): Boolean {
-        val gatt = bluetoothGatt ?: return false
+        val gatt = bluetoothGatt ?: run {
+            addDebugLog("TX rejected: $label (not connected)")
+            return false
+        }
         val normalizedLabel = label.trim()
 
         synchronized(writeQueue) {
-            // Prevent the same command from being queued repeatedly, while still
-            // allowing different buttons to queue their own independent commands.
             if (writeQueue.any {
                     it.label == normalizedLabel && it.characteristic.uuid == characteristic.uuid
                 }
             ) {
-                Log.d(tag, "[BLE] Duplicate queued command ignored: $normalizedLabel")
+                addDebugLog("TX duplicate suppressed: $normalizedLabel")
                 return true
             }
 
@@ -526,6 +593,7 @@ class BleConnectionManager(private val context: Context) {
             )
         }
 
+        addDebugLog("TX queued: $normalizedLabel")
         processNextWrite(gatt)
         return true
     }
@@ -543,10 +611,12 @@ class BleConnectionManager(private val context: Context) {
             }
         } ?: return
 
-        if (!writeCharacteristicCompat(gatt, next.characteristic, next.value, next.type)) {
+        val started = writeCharacteristicCompat(gatt, next.characteristic, next.value, next.type)
+        if (!started) {
             synchronized(writeQueue) {
                 writeInProgress = false
             }
+            addDebugLog("TX start failed: ${next.label}; retrying")
 
             handler.postDelayed({
                 if (isActiveGatt(gatt)) {
@@ -554,8 +624,37 @@ class BleConnectionManager(private val context: Context) {
                 }
             }, 200)
         } else {
-            Log.d(tag, "[BLE] Write started: ${next.label}")
+            addDebugLog("TX started: ${next.label}")
+            startWriteTimeout(gatt, next.label)
         }
+    }
+
+    private fun startWriteTimeout(gatt: BluetoothGatt, label: String) {
+        cancelWriteTimeout()
+        writeTimeout = Runnable {
+            if (!isActiveGatt(gatt)) return@Runnable
+
+            val recovered = synchronized(writeQueue) {
+                if (writeInProgress && writeQueue.isNotEmpty()) {
+                    writeQueue.removeFirst()
+                    writeInProgress = false
+                    true
+                } else {
+                    false
+                }
+            }
+
+            if (recovered) {
+                addDebugLog("TX timeout: $label; queue recovered")
+                processNextWrite(gatt)
+            }
+        }
+        handler.postDelayed(writeTimeout!!, 3000)
+    }
+
+    private fun cancelWriteTimeout() {
+        writeTimeout?.let(handler::removeCallbacks)
+        writeTimeout = null
     }
 
     @SuppressLint("MissingPermission")
@@ -599,7 +698,7 @@ class BleConnectionManager(private val context: Context) {
         cancelTimeout()
         currentTimeout = Runnable {
             if (id == activeAttemptId && isConnecting) {
-                Log.e(tag, "[BLE][$id] setup timeout state=${_connectionState.value}")
+                addDebugLog("BLE setup timeout state=${_connectionState.value}")
                 bluetoothGatt?.let { handleError(id, it) }
             }
         }
@@ -615,6 +714,8 @@ class BleConnectionManager(private val context: Context) {
     private fun closeGatt(disconnect: Boolean) {
         val gatt = bluetoothGatt
         bluetoothGatt = null
+
+        cancelWriteTimeout()
 
         if (disconnect) {
             try {
@@ -653,6 +754,7 @@ class BleConnectionManager(private val context: Context) {
 
     private fun handleDisconnect(id: Int, gatt: BluetoothGatt) {
         if (id == activeAttemptId && isActiveGatt(gatt)) {
+            addDebugLog("Disconnected")
             closeGatt(false)
             _connectionState.value = ConnectionState.DISCONNECTED
             _connectedDeviceName.value = null
@@ -662,6 +764,7 @@ class BleConnectionManager(private val context: Context) {
 
     private fun handleError(id: Int, gatt: BluetoothGatt) {
         if (id == activeAttemptId && isActiveGatt(gatt)) {
+            addDebugLog("Connection entered ERROR state")
             closeGatt(true)
             _connectionState.value = ConnectionState.ERROR
             _connectedDeviceName.value = null
