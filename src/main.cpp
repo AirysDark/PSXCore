@@ -18,6 +18,7 @@
 
 static bool systemBooted = false;
 static bool psxReady = false;
+static bool bootSummaryPrinted = false;
 
 static void bootMark(const char *name, bool ok) {
   Serial.print("[BOOT] ");
@@ -73,15 +74,9 @@ static bool handleAnalogButtonEvent() {
 }
 
 static void initializeControllerMode(uint8_t &controllerId) {
-  // Always request analog mode during boot. This must happen after the PSX
-  // controller has been detected and before the analog-button state layer is
-  // initialized, otherwise a controller that powers up in digital mode stays
-  // reported as digital until the physical ANALOG button is pressed.
   Serial.println("[BOOT] Enabling PS2 analog mode...");
   const bool analogEnabled = psx_enable_analog_mode();
 
-  // Probe again because the controller ID can change from 0x41 to 0x73/0x79
-  // immediately after the configuration sequence completes.
   if (psxProbeController(&controllerId)) {
     Serial.printf("[BOOT] Controller mode after setup: ID=%02X\n", controllerId);
   } else {
@@ -92,8 +87,24 @@ static void initializeControllerMode(uint8_t &controllerId) {
   bootMark("Analog mode", analogEnabled && analogButtonIsAnalogMode());
 }
 
+static void printReadyBanner() {
+  if (bootSummaryPrinted) return;
+  bootSummaryPrinted = true;
+
+  Serial.println("================================");
+  Serial.println("[BOOT] PSXCore READY");
+  Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
+  Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
+  Serial.println("================================");
+
+  // Enable the first 12 PSX RAW diagnostics only after the full asynchronous
+  // BLE/GATT/advertising startup has completed and all boot output is done.
+  psxSetRawDebugEnabled(true);
+}
+
 void setup() {
   Serial.begin(115200);
+  psxSetRawDebugEnabled(false);
 
   Serial.println();
   Serial.println("================================");
@@ -162,8 +173,8 @@ void setup() {
   Serial.println("[BOOT] Starting Bluetooth HID + Android companion...");
   bleGamepadBegin();
   bootMark("Bluetooth HID", true);
-  Serial.printf("[BOOT] Android companion   %s\n", bleConfigIsReady() ? "READY" : "FAILED");
-  Serial.println("[BOOT] BLE advertising      ON");
+  Serial.println("[BOOT] Android companion   STARTING");
+  Serial.println("[BOOT] BLE advertising      STARTING");
 
   ControllerState idleState{};
   idleState.lx = idleState.ly = idleState.rx = idleState.ry = 0x80;
@@ -173,12 +184,6 @@ void setup() {
   Serial.println("[BOOT] Idle sleep           5 MINUTES");
 
   systemBooted = true;
-
-  Serial.println("================================");
-  Serial.println("[BOOT] PSXCore READY");
-  Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
-  Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
-  Serial.println("================================");
 }
 
 void loop() {
@@ -194,6 +199,14 @@ void loop() {
   if (!powerManagerIsSleeping()) {
     bleGamepadUpdate();
     bleConfigNotifyControllerState();
+
+    // The BLE/GATT manager initializes asynchronously. Hold back the final
+    // READY banner and RAW diagnostics until both the custom app service and
+    // advertising are actually ready, rather than claiming readiness early.
+    if (!bootSummaryPrinted && bleConfigIsReady()) {
+      printReadyBanner();
+    }
+
     debugStatusLoop();
     delay(5);
   } else {
