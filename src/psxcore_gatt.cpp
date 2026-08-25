@@ -16,10 +16,18 @@ static PsxCoreGattCallbacks rxCallbacks = { nullptr, nullptr, nullptr };
 static bool gattReady = false;
 static bool gattInitializing = false;
 
-static std::deque<std::string> responseQueue;
-static std::deque<std::string> stateQueue;
-static std::deque<std::string> otaQueue;
+struct PendingFrame {
+    std::string data;
+    size_t offset = 0;
+};
+
+static std::deque<PendingFrame> responseQueue;
+static std::deque<PendingFrame> stateQueue;
+static std::deque<PendingFrame> otaQueue;
 static constexpr size_t MAX_PENDING_FRAMES = 32;
+// Safe on the minimum BLE ATT MTU (23 bytes -> 20-byte payload).
+// Android reassembles the newline-framed logical message.
+static constexpr size_t SAFE_NOTIFY_CHUNK = 20;
 
 static const char* SERVICE_UUID     = "7a4f0000-0000-4f50-5358-434f52450001";
 static const char* COMMAND_UUID     = "7a4f0000-0000-4f50-5358-434f52450002";
@@ -126,15 +134,17 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
 
     Serial.println("[PSX-GATT] Service registered successfully");
     Serial.println("[PSX-GATT] GATT CONTRACT: Android + firmware UUIDs synchronized");
-    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED + NEWLINE FRAMED");
+    Serial.println("[PSX-GATT] Outgoing notifications: SERIALIZED + NEWLINE FRAMED + MTU-SAFE CHUNKED");
     return true;
 }
 
 bool psxCoreGattIsReady() { return gattReady; }
 
-static void enqueueFrame(std::deque<std::string>& queue, const uint8_t* data, size_t length, bool replaceLatest) {
+static void enqueueFrame(std::deque<PendingFrame>& queue, const uint8_t* data, size_t length, bool replaceLatest) {
     if (!gattReady || !data || !length) return;
-    std::string frame(reinterpret_cast<const char*>(data), length);
+    PendingFrame frame;
+    frame.data.assign(reinterpret_cast<const char*>(data), length);
+    frame.offset = 0;
     if (replaceLatest) {
         if (queue.empty()) queue.push_back(std::move(frame));
         else queue.back() = std::move(frame);
@@ -147,7 +157,7 @@ static void enqueueFrame(std::deque<std::string>& queue, const uint8_t* data, si
     queue.push_back(std::move(frame));
 }
 
-static void enqueueTextFrame(std::deque<std::string>& queue, const char* text, bool replaceLatest) {
+static void enqueueTextFrame(std::deque<PendingFrame>& queue, const char* text, bool replaceLatest) {
     if (!text) return;
     const size_t length = strlen(text);
     if (!length) return;
@@ -156,17 +166,46 @@ static void enqueueTextFrame(std::deque<std::string>& queue, const char* text, b
     enqueueFrame(queue, reinterpret_cast<const uint8_t*>(frame.data()), frame.size(), replaceLatest);
 }
 
-static bool sendNextFrame(NimBLECharacteristic* characteristic, std::deque<std::string>& queue, const char* label) {
+static bool sendNextFrame(NimBLECharacteristic* characteristic, std::deque<PendingFrame>& queue, const char* label) {
     if (!gattReady || !characteristic || queue.empty()) return false;
-    const std::string& frame = queue.front();
-    characteristic->setValue(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());
-    if (!characteristic->notify()) {
-        Serial.printf("[PSX-GATT] TX %s pending: notify not accepted; keeping %u-byte frame queued\n", label, (unsigned)frame.size());
+
+    PendingFrame& frame = queue.front();
+    if (frame.offset >= frame.data.size()) {
+        queue.pop_front();
         return false;
     }
-    const size_t length = frame.size();
-    queue.pop_front();
-    Serial.printf("[PSX-GATT] TX %s delivered: %u bytes\n", label, (unsigned)length);
+
+    const size_t remaining = frame.data.size() - frame.offset;
+    const size_t chunkLength = remaining > SAFE_NOTIFY_CHUNK ? SAFE_NOTIFY_CHUNK : remaining;
+
+    characteristic->setValue(
+        reinterpret_cast<const uint8_t*>(frame.data.data() + frame.offset),
+        chunkLength
+    );
+
+    if (!characteristic->notify()) {
+        Serial.printf(
+            "[PSX-GATT] TX %s pending: notify not accepted; keeping frame at %u/%u bytes\n",
+            label,
+            (unsigned)frame.offset,
+            (unsigned)frame.data.size()
+        );
+        return false;
+    }
+
+    frame.offset += chunkLength;
+    const bool complete = frame.offset >= frame.data.size();
+
+    Serial.printf(
+        "[PSX-GATT] TX %s chunk delivered: %u bytes (%u/%u)%s\n",
+        label,
+        (unsigned)chunkLength,
+        (unsigned)frame.offset,
+        (unsigned)frame.data.size(),
+        complete ? " COMPLETE" : ""
+    );
+
+    if (complete) queue.pop_front();
     return true;
 }
 
