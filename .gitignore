@@ -3,3 +3,10 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+android/.gradle
+android/.idea
+android/.kotlln
+android/build
+android/app/build
+android/java_pid15712.hprof
+android/java_pid9528.hprof
