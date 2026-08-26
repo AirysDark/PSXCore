@@ -60,12 +60,17 @@ class PsxCoreMessageParser {
             val json = JSONObject(message)
             if (json.optString("type") == "info") {
                 DeviceInfo(
-                    firmwareVersion = json.optString("version", "Unknown"),
-                    hardwareRevision = json.optString("hardware", "Unknown"),
+                    firmwareVersion = json.optString("version", json.optString("firmware", "Unknown")),
+                    hardwareRevision = json.optString("hardware", json.optString("hardwareRevision", "Unknown")),
                     deviceName = json.optString("device", json.optString("name", "PSXCore")),
-                    buildDate = json.optString("build", "Unknown"),
-                    protocolVersion = json.optInt("protocol", 0),
-                    otaSupport = json.optBoolean("ota", false)
+                    buildDate = json.optString("build", json.optString("buildDate", "Unknown")),
+                    protocolVersion = json.optInt("protocol", json.optInt("protocolVersion", 0)),
+                    otaSupport = when {
+                        json.has("otaSupported") -> json.optBoolean("otaSupported", false)
+                        json.has("ota") && json.opt("ota") is Boolean -> json.optBoolean("ota", false)
+                        json.has("ota") -> json.optString("ota").equals("ready", ignoreCase = true)
+                        else -> false
+                    }
                 )
             } else null
         } catch (e: Exception) {
@@ -79,9 +84,9 @@ class PsxCoreMessageParser {
             if (json.optString("type") == "settings") {
                 DeviceSettings(
                     controllerName = json.optString("name", "PSXCore Controller"),
-                    sleepTimeoutMinutes = json.optInt("sleep", 5),
+                    sleepTimeoutMinutes = json.optInt("sleepMinutes", json.optInt("sleep", 5)),
                     analogModeBehavior = json.optInt("analog_behavior", 0),
-                    inactivityTimeoutMinutes = json.optInt("inactivity", 5),
+                    inactivityTimeoutMinutes = json.optInt("inactivity", json.optInt("sleepMinutes", 5)),
                     autoReconnect = json.optBoolean("auto_reconnect", true)
                 )
             } else null
@@ -100,7 +105,7 @@ class PsxCoreMessageParser {
                     expectedSize = json.optLong("expectedSize", 0),
                     progress = json.optDouble("progress", 0.0).toFloat(),
                     availableSpace = json.optLong("availableSpace", 0),
-                    error = json.optString("error", "").let { if (it.isEmpty()) null else it },
+                    error = json.optString("error", json.optString("reason", "")).let { if (it.isEmpty()) null else it },
                     rebooting = json.optBoolean("rebooting", false)
                 )
             } else null
@@ -136,7 +141,7 @@ class PsxCoreMessageParser {
         return try {
             val json = JSONObject(message)
             if (json.optString("type") == "ota" && json.optString("state") == "error") {
-                json.optString("error", "Unknown OTA error")
+                json.optString("error", json.optString("reason", "Unknown OTA error"))
             } else null
         } catch (e: Exception) {
             null
