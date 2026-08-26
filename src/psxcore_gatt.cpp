@@ -52,9 +52,32 @@ class OtaDataCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
+class NotifyCallbacks : public NimBLECharacteristicCallbacks {
+    void onSubscribe(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
+        if (!characteristic) return;
+        Serial.printf(
+            "[PSX-GATT] SUBSCRIBE handle=%u uuid=%s value=%u subscribers=%u\n",
+            (unsigned)connInfo.getConnHandle(),
+            characteristic->getUUID().toString().c_str(),
+            (unsigned)subValue,
+            (unsigned)characteristic->getSubscribedCount()
+        );
+    }
+
+    void onStatus(NimBLECharacteristic* characteristic, int code) override {
+        if (!characteristic || code == 0) return;
+        Serial.printf(
+            "[PSX-GATT] NOTIFY STATUS uuid=%s code=%d\n",
+            characteristic->getUUID().toString().c_str(),
+            code
+        );
+    }
+};
+
 static CommandCallbacks commandCallbacks;
 static OtaControlCallbacks otaControlCallbacks;
 static OtaDataCallbacks otaDataCallbacks;
+static NotifyCallbacks notifyCallbacks;
 
 bool psxCoreGattRefreshAdvertising() {
     return true;
@@ -114,6 +137,9 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     commandChar->setCallbacks(&commandCallbacks);
     otaControlChar->setCallbacks(&otaControlCallbacks);
     otaDataChar->setCallbacks(&otaDataCallbacks);
+    responseChar->setCallbacks(&notifyCallbacks);
+    stateChar->setCallbacks(&notifyCallbacks);
+    otaStatusChar->setCallbacks(&notifyCallbacks);
 
     psxService->start();
 
@@ -134,8 +160,26 @@ bool psxCoreGattIsReady() { return gattReady; }
 static void sendCharacteristic(
     NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
-    characteristic->setValue(data, length);
-    characteristic->notify();
+
+    const size_t subscribers = characteristic->getSubscribedCount();
+    if (!subscribers) {
+        Serial.printf(
+            "[PSX-GATT] NOTIFY SKIPPED uuid=%s len=%u subscribers=0\n",
+            characteristic->getUUID().toString().c_str(),
+            (unsigned)length
+        );
+        return;
+    }
+
+    const bool sent = characteristic->notify(data, length);
+    if (!sent) {
+        Serial.printf(
+            "[PSX-GATT] NOTIFY FAILED uuid=%s len=%u subscribers=%u\n",
+            characteristic->getUUID().toString().c_str(),
+            (unsigned)length,
+            (unsigned)subscribers
+        );
+    }
 }
 
 static void sendTextFrame(NimBLECharacteristic* characteristic, const char* text) {
