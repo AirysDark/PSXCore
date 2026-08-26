@@ -56,11 +56,10 @@ class NotifyCallbacks : public NimBLECharacteristicCallbacks {
     void onSubscribe(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
         if (!characteristic) return;
         Serial.printf(
-            "[PSX-GATT] SUBSCRIBE handle=%u uuid=%s value=%u subscribers=%u\n",
+            "[PSX-GATT] SUBSCRIBE handle=%u uuid=%s value=%u\n",
             (unsigned)connInfo.getConnHandle(),
             characteristic->getUUID().toString().c_str(),
-            (unsigned)subValue,
-            (unsigned)characteristic->getSubscribedCount()
+            (unsigned)subValue
         );
     }
 
@@ -141,7 +140,8 @@ bool psxCoreGattBegin(const PsxCoreGattCallbacks& callbacks) {
     stateChar->setCallbacks(&notifyCallbacks);
     otaStatusChar->setCallbacks(&notifyCallbacks);
 
-    psxService->start();
+    // NimBLE-Arduino starts services automatically with the server.
+    // Do not call the deprecated NimBLEService::start().
 
     gattReady = true;
     gattInitializing = false;
@@ -161,23 +161,15 @@ static void sendCharacteristic(
     NimBLECharacteristic* characteristic, const uint8_t* data, size_t length) {
     if (!gattReady || !characteristic || !data || !length) return;
 
-    const size_t subscribers = characteristic->getSubscribedCount();
-    if (!subscribers) {
-        Serial.printf(
-            "[PSX-GATT] NOTIFY SKIPPED uuid=%s len=%u subscribers=0\n",
-            characteristic->getUUID().toString().c_str(),
-            (unsigned)length
-        );
-        return;
-    }
-
+    // The NimBLE-Arduino version bundled with this project does not provide
+    // getSubscribedCount(). notify() is the compatibility-safe API and returns
+    // false when a notification cannot be sent.
     const bool sent = characteristic->notify(data, length);
     if (!sent) {
         Serial.printf(
-            "[PSX-GATT] NOTIFY FAILED uuid=%s len=%u subscribers=%u\n",
+            "[PSX-GATT] NOTIFY FAILED/SKIPPED uuid=%s len=%u\n",
             characteristic->getUUID().toString().c_str(),
-            (unsigned)length,
-            (unsigned)subscribers
+            (unsigned)length
         );
     }
 }
