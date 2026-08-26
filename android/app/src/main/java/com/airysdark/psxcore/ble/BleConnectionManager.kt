@@ -39,6 +39,7 @@ enum class ConnectionState {
 class BleConnectionManager(private val context: Context) {
     private val tag = "BleConnectionManager"
     private var bluetoothGatt: BluetoothGatt? = null
+    private var waitingForMtu = false
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -123,13 +124,24 @@ class BleConnectionManager(private val context: Context) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     _connectionState.value = ConnectionState.DISCOVERING_SERVICES
                     serviceDiscoveryRetried = false
-                    if (!gatt.discoverServices()) {
-                        Log.e(tag, "[BLE] discoverServices() returned false")
-                        handleError()
+                    waitingForMtu = true
+                    val requested = gatt.requestMtu(247)
+                    Log.d(tag, "[BLE] MTU request 247 started=$requested")
+                    if (!requested) {
+                        waitingForMtu = false
+                        startServiceDiscovery(gatt)
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> handleDisconnect()
             }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            Log.d(tag, "[BLE] MTU changed: mtu=$mtu status=$status")
+            if (!waitingForMtu) return
+            waitingForMtu = false
+            startServiceDiscovery(gatt)
         }
 
         @SuppressLint("MissingPermission")
@@ -206,6 +218,14 @@ class BleConnectionManager(private val context: Context) {
                 textWriteInProgress = false
             }
             processNextTextWrite(gatt)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startServiceDiscovery(gatt: BluetoothGatt) {
+        if (!gatt.discoverServices()) {
+            Log.e(tag, "[BLE] discoverServices() returned false")
+            handleError()
         }
     }
 
@@ -290,11 +310,13 @@ class BleConnectionManager(private val context: Context) {
         _isOtaReadyStatus.value = false
         _isGamepadServiceReady.value = gatt.getService(ProtocolConstants.HID_SERVICE_UUID) != null
         isConnecting = false
+        waitingForMtu = false
         handler.removeCallbacks(timeoutRunnable)
     }
 
     private fun handleIncomingData(data: ByteArray, uuid: UUID) {
         if (data.isEmpty()) return
+        Log.d(tag, "[BLE] RX uuid=$uuid len=${data.size}")
         when (uuid) {
             ProtocolConstants.PSX_RESPONSE_UUID -> processStream(data, responseBuffer) { message ->
                 Log.d(tag, "[BLE-RES] $message")
@@ -307,6 +329,7 @@ class BleConnectionManager(private val context: Context) {
                 }
             }
             ProtocolConstants.PSX_CONTROLLER_STATE_UUID -> processStream(data, stateBuffer) { message ->
+                Log.d(tag, "[BLE-STATE] $message")
                 if (message.startsWith("{")) {
                     parser.parseState(message, _inputState.value.packetCount + 1)?.let { _inputState.value = it }
                 }
@@ -479,6 +502,7 @@ class BleConnectionManager(private val context: Context) {
         bluetoothGatt?.disconnect()
         bluetoothGatt?.close()
         bluetoothGatt = null
+        waitingForMtu = false
         commandChar = null
         responseChar = null
         controllerStateChar = null
