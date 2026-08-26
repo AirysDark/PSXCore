@@ -24,6 +24,9 @@ static uint8_t lastStateLx = 0xFF, lastStateLy = 0xFF, lastStateRx = 0xFF, lastS
 
 static const char* BLE_DEVICE_NAME = "PSXCore";
 static const char* HID_SERVICE_UUID = "1812";
+static const char* PSXCORE_FIRMWARE_VERSION = "1.0.2";
+static const char* PSXCORE_HARDWARE = "ESP32-S3";
+static const char* PSXCORE_BUILD = __DATE__ " " __TIME__;
 
 enum class OtaState : uint8_t { Idle, Ready, Receiving, Success, Error };
 static OtaState otaState = OtaState::Idle;
@@ -47,29 +50,18 @@ static bool finishOta() { if(otaState!=OtaState::Receiving || !Update.isRunning(
 
 static int16_t psxAxisToHid(uint8_t v){return(int16_t)((uint32_t(v)*32767U+127U)/255U);}
 static void sendConfigHello(){bleConfigSendText("{\"type\":\"hello\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");}
-static void sendInfo(){bleConfigSendText("{\"type\":\"info\",\"device\":\"PSXCore\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n");}
+static void sendInfo(){char m[320];snprintf(m,sizeof(m),"{\"type\":\"info\",\"device\":\"%s\",\"version\":\"%s\",\"hardware\":\"%s\",\"build\":\"%s\",\"protocol\":7,\"transport\":\"shared-gatt\",\"hid\":true,\"config\":true,\"liveState\":true,\"ota\":\"ready\",\"otaSupported\":true}\n",BLE_DEVICE_NAME,PSXCORE_FIRMWARE_VERSION,PSXCORE_HARDWARE,PSXCORE_BUILD);bleConfigSendText(m);}
 static void sendSettings(){bleConfigSendText("{\"type\":\"settings\",\"analogControl\":true,\"sleepMinutes\":5}\n");}
 static void handleCommand(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="PING")bleConfigSendText("PONG\n");else if(command=="HELLO"||command=="INFO")sendInfo();else if(command=="GET_STATE")bleConfigNotifyControllerState(true);else if(command=="GET_SETTINGS")sendSettings();else if(command=="SET_ANALOG"){psxEnableAnalogMode();bleConfigSendText("{\"type\":\"result\",\"command\":\"SET_ANALOG\",\"ok\":true}\n");}else bleConfigSendText("{\"type\":\"error\",\"error\":\"unknown_command\"}\n");}
 static void handleOtaControl(const uint8_t* data,size_t length){if(!data||!length)return;String command;command.reserve(length);for(size_t i=0;i<length;i++)command+=(char)data[i];command.trim();if(command=="OTA_INFO")sendOtaInfo();else if(command.startsWith("OTA_BEGIN:")){String s=command.substring(strlen("OTA_BEGIN:"));s.trim();char* end=nullptr;unsigned long v=strtoul(s.c_str(),&end,10);if(!s.length()||end==s.c_str()||*end!='\0')abortOta("invalid_begin_command");else beginOta((size_t)v);}else if(command=="OTA_END")finishOta();else if(command=="OTA_RESET"){if(Update.isRunning())Update.abort();resetOtaState();sendOtaInfo();}else sendOtaText("{\"type\":\"ota\",\"state\":\"error\",\"reason\":\"unknown_control_command\"}\n");}
 static void handleOtaData(const uint8_t* data,size_t length){if(data&&length)writeOtaChunk(data,length);}
 
-static bool nimbleHostReady(){
-  NimBLEServer* server=NimBLEDevice::getServer();
-  return server!=nullptr;
-}
+static bool nimbleHostReady(){NimBLEServer* server=NimBLEDevice::getServer();return server!=nullptr;}
 
 static void configureSharedAdvertising(){
-  if(!nimbleHostReady()){
-    advertisingConfigured=false;
-    Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST");
-    return;
-  }
+  if(!nimbleHostReady()){advertisingConfigured=false;Serial.println("[BLE] Advertising WAITING FOR NIMBLE HOST");return;}
   NimBLEAdvertising* advertising=NimBLEDevice::getAdvertising();
-  if(!advertising){
-    advertisingConfigured=false;
-    Serial.println("[BLE] Advertising ERROR: object unavailable");
-    return;
-  }
+  if(!advertising){advertisingConfigured=false;Serial.println("[BLE] Advertising ERROR: object unavailable");return;}
   if(advertising->isAdvertising()) advertising->stop();
   advertising->reset();
   NimBLEAdvertisementData advertisingData;
@@ -85,35 +77,21 @@ static void configureSharedAdvertising(){
   delay(50);
   bool active=started&&advertising->isAdvertising();
   Serial.printf("[BLE] Shared advertising: %s\n",active?"ON":"FAILED");
-  if(active){
-    Serial.printf("[BLE] DISCOVERABLE NAME: %s\n",BLE_DEVICE_NAME);
-    Serial.println("[BLE] ONE DEVICE: HID gamepad + PSXCore custom GATT");
-  }
+  if(active){Serial.printf("[BLE] DISCOVERABLE NAME: %s\n",BLE_DEVICE_NAME);Serial.println("[BLE] ONE DEVICE: HID gamepad + PSXCore custom GATT");}
 }
 
 static void ensureAdvertising(){
   if(!nimbleHostReady()) return;
   NimBLEAdvertising* advertising=NimBLEDevice::getAdvertising();
   if(!advertising) return;
-  if(!advertisingConfigured){
-    configureSharedAdvertising();
-    return;
-  }
-  if(!advertising->isAdvertising()){
-    bool started=advertising->start();
-    Serial.printf("[BLE] Advertising restart: %s\n",(started&&advertising->isAdvertising())?"OK":"FAILED");
-  }
+  if(!advertisingConfigured){configureSharedAdvertising();return;}
+  if(!advertising->isAdvertising()){bool started=advertising->start();Serial.printf("[BLE] Advertising restart: %s\n",(started&&advertising->isAdvertising())?"OK":"FAILED");}
 }
 
 static void tryInitPsxCoreGatt(){
   if(configReady || !configInitPending) return;
   PsxCoreGattCallbacks callbacks={handleCommand,handleOtaControl,handleOtaData};
-  if(psxCoreGattBegin(callbacks)){
-    configReady=true;
-    configInitPending=false;
-    Serial.println("[BLE] PSXCore custom GATT: READY on shared BLE server");
-    Serial.printf("[OTA] Custom GATT OTA: READY, next slot=%lu bytes\n",(unsigned long)otaAvailableSpace());
-  }
+  if(psxCoreGattBegin(callbacks)){configReady=true;configInitPending=false;Serial.println("[BLE] PSXCore custom GATT: READY on shared BLE server");Serial.printf("[OTA] Custom GATT OTA: READY, next slot=%lu bytes\n",(unsigned long)otaAvailableSpace());}
 }
 
 static void updatePsxButtons(uint32_t b){static const struct{uint8_t psxBit;uint8_t hidButton;}m[]={{15,BUTTON_1},{14,BUTTON_2},{13,BUTTON_3},{12,BUTTON_4},{10,BUTTON_5},{11,BUTTON_6},{8,BUTTON_7},{9,BUTTON_8},{1,BUTTON_9},{2,BUTTON_10},{0,BUTTON_11},{3,BUTTON_12}};for(const auto&e:m){if(b&(1UL<<e.psxBit))bleGamepad.press(e.hidButton);else bleGamepad.release(e.hidButton);}bool u=b&(1UL<<4),r=b&(1UL<<5),d=b&(1UL<<6),l=b&(1UL<<7);if(u&&r)bleGamepad.setHat1(HAT_UP_RIGHT);else if(r&&d)bleGamepad.setHat1(HAT_DOWN_RIGHT);else if(d&&l)bleGamepad.setHat1(HAT_DOWN_LEFT);else if(l&&u)bleGamepad.setHat1(HAT_UP_LEFT);else if(u)bleGamepad.setHat1(HAT_UP);else if(r)bleGamepad.setHat1(HAT_RIGHT);else if(d)bleGamepad.setHat1(HAT_DOWN);else if(l)bleGamepad.setHat1(HAT_LEFT);else bleGamepad.setHat1(HAT_CENTERED);}
@@ -140,6 +118,11 @@ void ble_send_report(){
   if(!configReady && configInitPending && (uint32_t)(millis()-lastConfigInitAttempt)>=250){lastConfigInitAttempt=millis();tryInitPsxCoreGatt();}
   if((uint32_t)(millis()-lastAdvertisingCheck)>=500){lastAdvertisingCheck=millis();ensureAdvertising();}
   if(otaState==OtaState::Success && otaCompletedAt && (uint32_t)(millis()-otaCompletedAt)>=1500){Serial.println("[OTA] RESTART NOW");delay(50);ESP.restart();return;}
+
+  // Custom companion GATT is independent from the HID connection. Keep its
+  // controller-state path alive even when Android is not connected as HID.
+  if(configReady) bleConfigNotifyControllerState();
+
   bool connected=bleGamepad.isConnected();
   debugStatusBLEState(connected);
   if(connected!=lastConnected){
@@ -148,12 +131,12 @@ void ble_send_report(){
     if(connected&&configReady)sendConfigHello();
     if(!connected)ensureAdvertising();
   }
-  if(!connected)return;
+
+  if(!connected) return;
   updatePsxButtons(controllerState.buttons);
   bleGamepad.setLeftThumb(psxAxisToHid(controllerState.lx),psxAxisToHid(controllerState.ly));
   bleGamepad.setRightThumb(psxAxisToHid(controllerState.rx),psxAxisToHid(controllerState.ry));
   bleGamepad.sendReport();
-  bleConfigNotifyControllerState();
   debugStatusBLEUpdate();
 }
 
