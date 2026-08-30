@@ -34,19 +34,39 @@ The partition layouts reserve NVS for persistent settings, provide dual OTA appl
 
 ## PSX controller boot protocol
 
-Default PSX wiring is:
+Proven ESP32-S3 signal wiring is:
 
 | Role | GPIO |
 |---|---:|
-| DATA | 4 |
-| COMMAND | 5 |
-| ATTENTION | 6 |
-| CLOCK | 7 |
+| DATA | 6 |
+| COMMAND | 4 |
+| ATTENTION | 7 |
+| CLOCK | 5 |
 | ACK | 8 |
 
 At boot the firmware initializes the PSX bus and probes for a controller. If there is no valid response, it enters **pin sweep recovery** and tests permutations of GPIO 4, 5, 6, 7 and 8. A valid controller response causes the corrected mapping to be saved in NVS and the PSX bus to be initialized again.
 
 PSX polling remains disabled when no controller is detected, preventing the previous continuous `FF` transaction output from flooding the serial monitor.
+
+## Full PS2 controller connector
+
+PSXCore now keeps the complete original 9-pin controller connector definition, including the original rumble supply and unused line.
+
+| Connector pin | Role | PSXCore use |
+|---:|---|---|
+| 1 | DATA | ESP32 signal |
+| 2 | COMMAND | ESP32 signal |
+| 3 | ~7V RUMBLE | Reserved/original motor supply |
+| 4 | GND | Ground |
+| 5 | 3.3V | Controller logic supply |
+| 6 | ATTENTION | ESP32 signal |
+| 7 | CLOCK | ESP32 signal |
+| 8 | NC | Reserved / not connected |
+| 9 | ACK | ESP32 signal |
+
+The original ~7V rumble line must **not** be connected directly to an ESP32 GPIO. It is retained in the connector definition for hardware compatibility and future power-driver work.
+
+A separate `PSX_RUMBLE_3V_GPIO` definition is reserved for the planned 3V rumble implementation. It is currently `-1` (disabled) until the final GPIO and external transistor/MOSFET motor driver are selected.
 
 ## Persistent pin mapping
 
