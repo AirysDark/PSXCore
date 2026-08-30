@@ -1,7 +1,0 @@
-<resources>
-    <string name="app_name">PSXCore</string>
-    <string name="controller_tab">Controller</string>
-    <string name="configure_tab">Configure</string>
-    <string name="firmware_tab">Firmware</string>
-    <string name="settings_tab">Settings</string>
-</resources>
