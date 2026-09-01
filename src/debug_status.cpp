@@ -28,7 +28,7 @@ void debugStatusBLEState(bool connected) {
   static bool previousConnected = false;
 
   if (connected != previousConnected) {
-    Serial.printf("[BLE] App %s\n", connected ? "connected" : "disconnected");
+    Serial.printf("[BLE] HID %s\n", connected ? "connected" : "disconnected");
     previousConnected = connected;
   }
 
@@ -39,7 +39,7 @@ void debugStatusLoop() {
   static uint32_t lastHeartbeat = 0;
 
   // Keep normal serial output quiet. Only print a heartbeat every two
-  // minutes while the Android app is actually connected over BLE.
+  // minutes while a Bluetooth HID host is connected.
   if (!bleConnected) {
     return;
   }
