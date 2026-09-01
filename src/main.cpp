@@ -91,19 +91,13 @@ static void printReadyBanner() {
   if (bootSummaryPrinted) return;
   bootSummaryPrinted = true;
 
-  // bleConfigIsReady() is the authoritative completion signal for the custom
-  // PSXCore GATT companion. Do not report FAILED while NimBLE is still
-  // asynchronously syncing and constructing the shared service.
-  Serial.println("[BOOT] Android companion   READY");
-  Serial.println("[BOOT] BLE advertising      READY");
+  Serial.println("[BOOT] Bluetooth HID       STARTED");
   Serial.println("================================");
   Serial.println("[BOOT] PSXCore READY");
   Serial.printf("[BOOT] Version              %s\n", PSXCORE_VERSION_STRING);
   Serial.printf("[BOOT] PSX polling          %s\n", psxReady ? "ENABLED" : "SEARCHING");
   Serial.println("================================");
 
-  // Enable the first 12 PSX RAW diagnostics only after the full asynchronous
-  // BLE/GATT/advertising startup has completed and all boot output is done.
   psxSetRawDebugEnabled(true);
 }
 
@@ -175,11 +169,9 @@ void setup() {
     Serial.println("[BOOT] ANALOG button       WAITING FOR CONTROLLER");
   }
 
-  Serial.println("[BOOT] Starting Bluetooth HID + Android companion...");
+  Serial.println("[BOOT] Starting Bluetooth HID gamepad...");
   bleGamepadBegin();
   bootMark("Bluetooth HID", true);
-  Serial.println("[BOOT] Android companion   STARTING");
-  Serial.println("[BOOT] BLE advertising      STARTING");
 
   ControllerState idleState{};
   idleState.lx = idleState.ly = idleState.rx = idleState.ry = 0x80;
@@ -189,6 +181,7 @@ void setup() {
   Serial.println("[BOOT] Idle sleep           5 MINUTES");
 
   systemBooted = true;
+  printReadyBanner();
 }
 
 void loop() {
@@ -203,15 +196,6 @@ void loop() {
 
   if (!powerManagerIsSleeping()) {
     bleGamepadUpdate();
-    bleConfigNotifyControllerState();
-
-    // The BLE/GATT manager initializes asynchronously. Hold back the final
-    // READY banner and RAW diagnostics until the custom app companion is
-    // actually ready. This prevents a false FAILED status during host sync.
-    if (!bootSummaryPrinted && bleConfigIsReady()) {
-      printReadyBanner();
-    }
-
     debugStatusLoop();
     delay(5);
   } else {
