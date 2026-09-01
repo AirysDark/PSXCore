@@ -1,7 +1,7 @@
 [package]
 name = "psxcore-control"
 version = "0.1.0"
-description = "PSXCore Windows and Android control client"
+description = "PSXCore Windows control client"
 authors = ["AirysDark"]
 edition = "2021"
 
