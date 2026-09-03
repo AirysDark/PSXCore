@@ -9,12 +9,13 @@
 #define PSX_DEFAULT_ATTENTION 7
 #define PSX_DEFAULT_CLOCK     5
 #define PSX_DEFAULT_ACK       8
+#define PSX_RUMBLE_GPIO       3
 
 // Full 9-pin PS2 controller connector mapping.
 // These are physical connector positions, NOT ESP32 GPIO numbers.
 #define PSX_CONNECTOR_DATA_PIN        1
 #define PSX_CONNECTOR_COMMAND_PIN     2
-#define PSX_CONNECTOR_RUMBLE_7V_PIN   3
+#define PSX_CONNECTOR_RUMBLE_PIN      3
 #define PSX_CONNECTOR_GND_PIN         4
 #define PSX_CONNECTOR_3V3_PIN         5
 #define PSX_CONNECTOR_ATTENTION_PIN   6
@@ -22,15 +23,12 @@
 #define PSX_CONNECTOR_NC_PIN          8
 #define PSX_CONNECTOR_ACK_PIN         9
 
-// The original ~7V rumble supply and the connector NC line are retained in
-// the PSXCore hardware definition but are not connected directly to an ESP32
-// GPIO. Never connect the 7V rumble supply directly to an ESP32 pin.
-#define PSX_RUMBLE_7V_GPIO   (-1)
-#define PSX_NC_GPIO          (-1)
-
-// Reserved output for the planned PSXCore 3V rumble driver. Leave disabled
-// until a GPIO and external transistor/MOSFET motor driver are assigned.
-#define PSX_RUMBLE_3V_GPIO   (-1)
+// PSXCore reuses the controller's original rumble conductor on connector pin 3.
+// The project supplies about 3V on that line instead of the original ~7V.
+// GPIO3 is the rumble control signal for the external motor switching stage;
+// do not power the rumble motor directly from the ESP32 GPIO.
+#define PSX_RUMBLE_POWER_VOLTS 3
+#define PSX_NC_GPIO             (-1)
 
 struct PsxPins {
   int data;
