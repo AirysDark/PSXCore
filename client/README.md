@@ -26,5 +26,3 @@ For development:
 ```bash
 npm run tauri dev
 ```
-
-Android companion support is not part of PSXCore.
