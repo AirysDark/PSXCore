@@ -77,7 +77,6 @@ void bleGamepadBegin() {
   debugStatusBLEState(false);
 
   Serial.println("[BLE] Bluetooth HID gamepad started");
-  Serial.println("[BLE] Android companion/custom GATT: REMOVED");
 }
 
 void bleGamepadUpdate() {
